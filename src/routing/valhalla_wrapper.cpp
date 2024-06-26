@@ -44,8 +44,8 @@ std::string ValhallaWrapper::get_matrix_query(
 
   query += "{\"sources\":[" + all_locations;
   query += "],\"targets\":[" + all_locations;
-  query += R"(],{ "costing_options": { "truck": { "exclude_polygons": [], "maneuver_penalty": 5, "country_crossing_penalty": 0, "country_crossing_cost": 600, "length": 21.5, "width": 1.6, "height": 1.9, "weight": 21.77, "axle_load": 9, "hazmat": false, "use_highways": 1, "use_tolls": 1, "use_ferry": 1, "ferry_cost": 300, "use_living_streets": 0.5, "use_tracks": 0, "private_access_penalty": 450, "ignore_closures": false, "ignore_restrictions": false, "ignore_access": false, "closure_factor": 9, "service_penalty": 15, "service_factor": 1, "exclude_unpaved": 1, "shortest": false, "exclude_cash_only_tolls": false, "top_speed": 140, "axle_count": 5, "fixed_speed": 0, "toll_booth_penalty": 0, "toll_booth_cost": 15, "gate_penalty": 300, "gate_cost": 30, "include_hov2": false, "include_hov3": false, "include_hot": false, "disable_hierarchy_pruning": false } })";
-  query += R"(,"costing":")" + profile + "\"";
+  query += R"(],"costing":")" + profile + "\"";
+  query += R"(,"costing_x":")" + profile + "\"";
   query += "}";
 
   query += " HTTP/1.1\r\n";
@@ -71,7 +71,6 @@ ValhallaWrapper::get_route_query(const std::vector<Location>& locations) const {
 
   query += R"(],"costing":")" + profile + "\"";
   query += "," + _routing_args;
-  query += R"(,{ "costing_options": { "truck": { "exclude_polygons": [], "maneuver_penalty": 5, "country_crossing_penalty": 0, "country_crossing_cost": 600, "length": 21.5, "width": 1.6, "height": 1.9, "weight": 21.77, "axle_load": 9, "hazmat": false, "use_highways": 1, "use_tolls": 1, "use_ferry": 1, "ferry_cost": 300, "use_living_streets": 0.5, "use_tracks": 0, "private_access_penalty": 450, "ignore_closures": false, "ignore_restrictions": false, "ignore_access": false, "closure_factor": 9, "service_penalty": 15, "service_factor": 1, "exclude_unpaved": 1, "shortest": false, "exclude_cash_only_tolls": false, "top_speed": 140, "axle_count": 5, "fixed_speed": 0, "toll_booth_penalty": 0, "toll_booth_cost": 15, "gate_penalty": 300, "gate_cost": 30, "include_hov2": false, "include_hov3": false, "include_hot": false, "disable_hierarchy_pruning": false } })";
   query += "}";
 
   query += " HTTP/1.1\r\n";
