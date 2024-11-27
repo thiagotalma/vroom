@@ -104,6 +104,10 @@ struct Server {
   Server(std::string host, std::string port)
     : host(std::move(host)), port(std::move(port)) {
   }
+
+  Server(std::string host, std::string port, std::string path)
+    : host(std::move(host)), port(std::move(port)), path(std::move(path)) {
+  }
 };
 
 // 'Single' job is a regular one-stop job without precedence
@@ -114,7 +118,7 @@ enum class JOB_TYPE { SINGLE, PICKUP, DELIVERY };
 enum class STEP_TYPE { START, JOB, BREAK, END };
 
 // Heuristic options.
-enum class HEURISTIC { BASIC, DYNAMIC, INIT_ROUTES };
+enum class HEURISTIC { BASIC, DYNAMIC };
 enum class INIT { NONE, HIGHER_AMOUNT, NEAREST, FURTHEST, EARLIEST_DEADLINE };
 enum class SORT { AVAILABILITY, COST };
 
@@ -129,15 +133,6 @@ struct HeuristicParameters {
                                 float regret_coeff,
                                 SORT sort = SORT::AVAILABILITY)
     : heuristic(heuristic), init(init), regret_coeff(regret_coeff), sort(sort) {
-  }
-
-  // Only makes sense for user-defined initial routes.
-  constexpr HeuristicParameters(HEURISTIC heuristic)
-    : heuristic(heuristic),
-      init(INIT::NONE),
-      regret_coeff(0),
-      sort(SORT::AVAILABILITY) {
-    assert(heuristic == HEURISTIC::INIT_ROUTES);
   }
 };
 
@@ -177,6 +172,29 @@ enum OperatorName {
   TSPFix,
   MAX
 };
+
+#if defined(LOG_LS_OPERATORS) || defined(LOG_LS)
+const std::array<std::string, OperatorName::MAX>
+  OPERATOR_NAMES({"UnassignedExchange",
+                  "CrossExchange",
+                  "MixedExchange",
+                  "TwoOpt",
+                  "ReverseTwoOpt",
+                  "Relocate",
+                  "OrOpt",
+                  "IntraExchange",
+                  "IntraCrossExchange",
+                  "IntraMixedExchange",
+                  "IntraRelocate",
+                  "IntraOrOpt",
+                  "IntraTwoOpt",
+                  "PDShift",
+                  "RouteExchange",
+                  "SwapStar",
+                  "RouteSplit",
+                  "PriorityReplace",
+                  "TSPFix"});
+#endif
 
 // Defined based on
 // https://sonarcloud.io/organizations/vroom-project/rules?open=cpp%3AS6045&rule_key=cpp%3AS6045

@@ -4,12 +4,24 @@
 
 ### Added
 
+#### Internals
+
+- Apply heuristics to partial solutions provided in input (#977)
+- LOG_LS flag to generate debug info on the internal solving process (#1124)
+
 ### Changed
 
 #### Internals
 
+- Bypass matrix request in `plan` mode (#444)
+- Refactor heuristics to reduce code duplication (#1181)
 - Refactor `Matrix` template class (#1089)
 - Refactor to use `std::format` whenever possible (#1081)
+- Reduce complexity for recreation process (#1155)
+- Refactor `SolutionIndicators` (#1169)
+- Remove amount consistency checks in `parse` in favor of upstream checks in `Input` (#1086)
+- Reduce code duplication in routing wrappers (#1184)
+- Allow passing `path` in `Server` ctor (#1192)
 
 #### CI
 
@@ -18,8 +30,17 @@
 - Update Ubuntu image to 24.04 (#1080)
 - `vroom` workflow uses g++-14 and clang++-18 (#1080)
 - `vroom + libosrm` workflow uses g++-13 and clang++-17 (#1080)
+- Update clang-format to 18 (#1148)
 
 ### Fixed
+
+#### Core solving
+
+- Solution quality regression when using lots of skills (#1193)
+- Crash due to wrong delivery values in some validity checks (#1164)
+- Crash when input is valid JSON but not an object (#1172)
+- Capacity array check consistency (#1086)
+- Segfault when using the C++ API with empty vehicles (#1187)
 
 #### Internals
 
@@ -28,6 +49,10 @@
 #### CI
 
 - Wrong compiler used for clang-based OSRM builds (#1098)
+
+#### Routing
+
+- ORS error handling (#1083)
 
 ## [v1.14.0] - 2024-01-16
 

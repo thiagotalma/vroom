@@ -8,7 +8,6 @@ All rights reserved (see LICENSE).
 */
 
 #include "routing/ors_wrapper.h"
-#include "utils/helpers.h"
 
 namespace vroom::routing {
 
@@ -34,7 +33,7 @@ std::string OrsWrapper::build_query(const std::vector<Location>& locations,
   }
   body += "\":[";
   for (auto const& location : locations) {
-    body += std::format("[{},{}],", location.lon(), location.lat());
+    body += std::format("[{:.6f},{:.6f}],", location.lon(), location.lat());
   }
   body.pop_back(); // Remove trailing ','.
   body += "]";
@@ -64,37 +63,34 @@ void OrsWrapper::check_response(const rapidjson::Document& json_result,
                                 const std::vector<Location>&,
                                 const std::string&) const {
   if (json_result.HasMember("error")) {
-    throw RoutingException(
-      std::string(json_result["error"]["message"].GetString()));
+    if (json_result["error"].IsObject() &&
+        json_result["error"].HasMember("message") &&
+        json_result["error"]["message"].IsString()) {
+      // Normal ORS error syntax.
+      throw RoutingException(
+        std::string(json_result["error"]["message"].GetString()));
+    }
+
+    if (json_result["error"].IsString()) {
+      // Web framework error uses another convention, see #1083.
+      auto error = std::string(json_result["error"].GetString());
+
+      if (json_result.HasMember("path") && json_result["path"].IsString()) {
+        error += " " + std::string(json_result["path"].GetString());
+      }
+      throw RoutingException(error);
+    }
   }
 }
 
-bool OrsWrapper::duration_value_is_null(
-  const rapidjson::Value& matrix_entry) const {
-  return matrix_entry.IsNull();
-}
+const rapidjson::Value&
+OrsWrapper::get_legs(const rapidjson::Value& result) const {
+  assert(result.HasMember("routes") && result["routes"].IsArray() &&
+         !result["routes"].Empty() &&
+         result["routes"][0].HasMember("segments") &&
+         result["routes"][0]["segments"].IsArray());
 
-bool OrsWrapper::distance_value_is_null(
-  const rapidjson::Value& matrix_entry) const {
-  return matrix_entry.IsNull();
-}
-
-UserDuration
-OrsWrapper::get_duration_value(const rapidjson::Value& matrix_entry) const {
-  return utils::round<UserDuration>(matrix_entry.GetDouble());
-}
-
-UserDistance
-OrsWrapper::get_distance_value(const rapidjson::Value& matrix_entry) const {
-  return utils::round<UserDistance>(matrix_entry.GetDouble());
-}
-
-unsigned OrsWrapper::get_legs_number(const rapidjson::Value& result) const {
-  return result["routes"][0]["segments"].Size();
-}
-
-std::string OrsWrapper::get_geometry(rapidjson::Value& result) const {
-  return result["routes"][0]["geometry"].GetString();
+  return result["routes"][0]["segments"];
 }
 
 } // namespace vroom::routing

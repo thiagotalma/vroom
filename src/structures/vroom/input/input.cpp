@@ -33,11 +33,6 @@ Input::Input(io::Servers servers, ROUTER router, bool apply_TSPFix)
   : _apply_TSPFix(apply_TSPFix), _servers(std::move(servers)), _router(router) {
 }
 
-void Input::set_amount_size(unsigned amount_size) {
-  _amount_size = amount_size;
-  _zero = Amount(amount_size);
-}
-
 void Input::set_geometry(bool geometry) {
   _geometry = geometry;
 }
@@ -74,7 +69,7 @@ void Input::add_routing_wrapper(const std::string& profile) {
     try {
       routing_wrapper = std::make_unique<routing::LibosrmWrapper>(profile);
     } catch (const osrm::exception& e) {
-      throw InputException("Invalid profile: " + profile);
+      throw InputException("Invalid profile: " + profile + ".");
     }
     break;
 #else
@@ -103,23 +98,27 @@ void Input::add_routing_wrapper(const std::string& profile) {
 #endif
 }
 
-void Input::check_job(Job& job) {
-  // Ensure delivery size consistency.
-  if (const auto delivery_size = job.delivery.size();
-      delivery_size != _amount_size) {
-    throw InputException(
-      std::format("Inconsistent delivery length: {} instead of {}.",
-                  delivery_size,
-                  _amount_size));
-  }
+void Input::check_amount_size(const Amount& amount) {
+  const auto size = amount.size();
 
-  // Ensure pickup size consistency.
-  if (const auto pickup_size = job.pickup.size(); pickup_size != _amount_size) {
-    throw InputException(
-      std::format("Inconsistent pickup length: {} instead of {}.",
-                  pickup_size,
-                  _amount_size));
+  if (!_amount_size.has_value()) {
+    // Only setup once on first call.
+    _amount_size = size;
+    _zero = Amount(size);
+  } else {
+    if (size != _amount_size.value()) {
+      throw InputException(
+        std::format("Inconsistent delivery length: {} instead of {}.",
+                    size,
+                    _amount_size.value()));
+    }
   }
+}
+
+void Input::check_job(Job& job) {
+  // Ensure delivery and pickup size consistency.
+  check_amount_size(job.delivery);
+  check_amount_size(job.pickup);
 
   // Ensure that location index are either always or never provided.
   bool has_location_index = job.location.user_index();
@@ -171,6 +170,19 @@ void Input::check_job(Job& job) {
   _max_matrices_used_index = std::max(_max_matrices_used_index, job.index());
   _all_locations_have_coords =
     _all_locations_have_coords && job.location.has_coordinates();
+}
+
+void Input::run_basic_checks() const {
+  if (vehicles.empty()) {
+    throw InputException("No vehicle defined.");
+  }
+  if (jobs.empty()) {
+    throw InputException("No task defined.");
+  }
+  if (_geometry && !_all_locations_have_coords) {
+    // Early abort when info is required with missing coordinates.
+    throw InputException("Route geometry request with missing coordinates.");
+  }
 }
 
 void Input::add_job(const Job& job) {
@@ -245,13 +257,7 @@ void Input::add_vehicle(const Vehicle& vehicle) {
   auto& current_v = vehicles.back();
 
   // Ensure amount size consistency.
-  if (const auto vehicle_amount_size = current_v.capacity.size();
-      vehicle_amount_size != _amount_size) {
-    throw InputException(
-      std::format("Inconsistent capacity length: {} instead of {}.",
-                  vehicle_amount_size,
-                  _amount_size));
-  }
+  check_amount_size(current_v.capacity);
 
   // Check for time-windows and skills.
   _has_TW = _has_TW || !vehicle.tw.is_default() || !vehicle.breaks.empty();
@@ -440,6 +446,10 @@ bool Input::has_homogeneous_costs() const {
   return _homogeneous_costs;
 }
 
+bool Input::has_initial_routes() const {
+  return _has_initial_routes;
+}
+
 bool Input::vehicle_ok_with_vehicle(Index v1_index, Index v2_index) const {
   return _vehicle_to_vehicle_compatibility[v1_index][v2_index];
 }
@@ -612,7 +622,8 @@ void Input::set_vehicles_costs() {
 }
 
 void Input::set_vehicles_max_tasks() {
-  if (_has_jobs && !_has_shipments && _amount_size > 0) {
+  if (const auto amount_size = get_amount_size();
+      _has_jobs && !_has_shipments && amount_size > 0) {
     // For job-only instances where capacity restrictions apply:
     // compute an upper bound of the number of jobs for each vehicle
     // based on pickups load and delivery loads. This requires sorting
@@ -627,12 +638,12 @@ void Input::set_vehicles_max_tasks() {
     };
 
     std::vector<std::vector<JobAmount>>
-      job_pickups_per_component(_amount_size,
+      job_pickups_per_component(amount_size,
                                 std::vector<JobAmount>(jobs.size()));
     std::vector<std::vector<JobAmount>>
-      job_deliveries_per_component(_amount_size,
+      job_deliveries_per_component(amount_size,
                                    std::vector<JobAmount>(jobs.size()));
-    for (std::size_t i = 0; i < _amount_size; ++i) {
+    for (std::size_t i = 0; i < amount_size; ++i) {
       for (Index j = 0; j < jobs.size(); ++j) {
         job_pickups_per_component[i][j] = JobAmount({j, jobs[j].pickup[i]});
         job_deliveries_per_component[i][j] =
@@ -649,7 +660,7 @@ void Input::set_vehicles_max_tasks() {
     for (Index v = 0; v < vehicles.size(); ++v) {
       std::size_t max_tasks = jobs.size();
 
-      for (std::size_t i = 0; i < _amount_size; ++i) {
+      for (std::size_t i = 0; i < amount_size; ++i) {
         Capacity pickup_sum = 0;
         Capacity delivery_sum = 0;
         std::size_t doable_pickups = 0;
@@ -736,7 +747,7 @@ void Input::set_jobs_vehicles_evals() {
   _jobs_vehicles_evals =
     std::vector<std::vector<Eval>>(jobs.size(),
                                    std::vector<Eval>(vehicles.size(),
-                                                     MAX_EVAL));
+                                                     Eval(_cost_upper_bound)));
 
   for (std::size_t j = 0; j < jobs.size(); ++j) {
     Index j_index = jobs[j].index();
@@ -909,7 +920,27 @@ void Input::init_missing_matrices(const std::string& profile) {
   }
 }
 
-void Input::set_matrices(unsigned nb_thread) {
+routing::Matrices Input::get_matrices_by_profile(const std::string& profile,
+                                                 bool sparse_filling) {
+  auto rw = std::ranges::find_if(_routing_wrappers, [&](const auto& wr) {
+    return wr->profile == profile;
+  });
+  assert(rw != _routing_wrappers.end());
+
+  if (sparse_filling) {
+    _vehicles_geometry.resize(vehicles.size());
+  }
+
+  // Note: get_sparse_matrices relies on getting in input *all*
+  // vehicles as it refers to vehicle ranks to store geometries.
+  return sparse_filling ? (*rw)->get_sparse_matrices(_locations,
+                                                     this->vehicles,
+                                                     this->jobs,
+                                                     _vehicles_geometry)
+                        : (*rw)->get_matrices(_locations);
+}
+
+void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
   if ((!_durations_matrices.empty() || !_distances_matrices.empty() ||
        !_costs_matrices.empty()) &&
       !_has_custom_location_index) {
@@ -962,7 +993,7 @@ void Input::set_matrices(unsigned nb_thread) {
         auto distances_m = _distances_matrices.find(profile);
 
         // Required matrices not manually set have been defined as
-        // empty above.
+        // empty above in init_missing_matrices.
         assert(durations_m != _durations_matrices.end());
         assert(distances_m != _distances_matrices.end());
         const bool define_durations = (durations_m->second.size() == 0);
@@ -974,15 +1005,10 @@ void Input::set_matrices(unsigned nb_thread) {
             durations_m->second = Matrix<UserDuration>(1);
             distances_m->second = Matrix<UserDistance>(1);
           } else {
-            auto rw =
-              std::ranges::find_if(_routing_wrappers, [&](const auto& wr) {
-                return wr->profile == profile;
-              });
-            assert(rw != _routing_wrappers.end());
+            auto matrices = get_matrices_by_profile(profile, sparse_filling);
 
             if (!_has_custom_location_index) {
               // Location indices are set based on order in _locations.
-              auto matrices = (*rw)->get_matrices(_locations);
               if (define_durations) {
                 durations_m->second = std::move(matrices.durations);
               }
@@ -992,8 +1018,6 @@ void Input::set_matrices(unsigned nb_thread) {
             } else {
               // Location indices are provided in input so we need an
               // indirection based on order in _locations.
-              auto matrices = (*rw)->get_matrices(_locations);
-
               if (define_durations) {
                 Matrix<UserDuration> full_m(_max_matrices_used_index + 1);
                 for (Index i = 0; i < _locations.size(); ++i) {
@@ -1094,14 +1118,12 @@ std::unique_ptr<VRP> Input::get_problem() const {
   return std::make_unique<CVRP>(*this);
 }
 
-Solution Input::solve(unsigned exploration_level,
+Solution Input::solve(unsigned nb_searches,
+                      unsigned depth,
                       unsigned nb_thread,
                       const Timeout& timeout,
                       const std::vector<HeuristicParameters>& h_param) {
-  if (_geometry && !_all_locations_have_coords) {
-    // Early abort when info is required with missing coordinates.
-    throw InputException("Route geometry request with missing coordinates.");
-  }
+  run_basic_checks();
 
   if (_has_initial_routes) {
     set_vehicle_steps_ranks();
@@ -1138,12 +1160,8 @@ Solution Input::solve(unsigned exploration_level,
   }
 
   // Solve.
-  const std::vector<HeuristicParameters> h_init_routes(1,
-                                                       HEURISTIC::INIT_ROUTES);
-  auto sol = instance->solve(exploration_level,
-                             nb_thread,
-                             solve_time,
-                             _has_initial_routes ? h_init_routes : h_param);
+  auto sol =
+    instance->solve(nb_searches, depth, nb_thread, solve_time, h_param);
 
   // Update timing info.
   sol.summary.computing_times.loading = loading.count();
@@ -1180,15 +1198,12 @@ Solution Input::solve(unsigned exploration_level,
 
 Solution Input::check(unsigned nb_thread) {
 #if USE_LIBGLPK
-  if (_geometry && !_all_locations_have_coords) {
-    // Early abort when info is required with missing coordinates.
-    throw InputException("Route geometry request with missing coordinates.");
-  }
+  run_basic_checks();
 
   set_vehicle_steps_ranks();
 
-  // TODO we don't need the whole matrix here.
-  set_matrices(nb_thread);
+  constexpr bool sparse_filling = true;
+  set_matrices(nb_thread, sparse_filling);
   set_vehicles_costs();
 
   // Fill basic skills compatibility matrix.
@@ -1201,7 +1216,9 @@ Solution Input::check(unsigned nb_thread) {
                    .count();
 
   // Check.
-  auto sol = validation::check_and_set_ETA(*this, nb_thread);
+  std::unordered_map<Index, Index> route_rank_to_v_rank;
+  auto sol =
+    validation::check_and_set_ETA(*this, nb_thread, route_rank_to_v_rank);
 
   // Update timing info.
   sol.summary.computing_times.loading = loading;
@@ -1213,16 +1230,13 @@ Solution Input::check(unsigned nb_thread) {
       .count();
 
   if (_geometry) {
-    for (auto& route : sol.routes) {
-      const auto& profile = route.profile;
-      auto rw = std::ranges::find_if(_routing_wrappers, [&](const auto& wr) {
-        return wr->profile == profile;
-      });
-      if (rw == _routing_wrappers.end()) {
-        throw InputException(
-          "Route geometry request with non-routable profile " + profile + ".");
-      }
-      (*rw)->add_geometry(route);
+    for (std::size_t i = 0; i < sol.routes.size(); ++i) {
+      auto& route = sol.routes[i];
+
+      auto search = route_rank_to_v_rank.find(i);
+      assert(search != route_rank_to_v_rank.end());
+      const auto v_rank = search->second;
+      route.geometry = std::move(_vehicles_geometry[v_rank]);
     }
 
     _end_routing = std::chrono::high_resolution_clock::now();

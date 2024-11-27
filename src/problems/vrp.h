@@ -13,6 +13,7 @@ All rights reserved (see LICENSE).
 #include <algorithm>
 #include <mutex>
 #include <numeric>
+#include <ranges>
 #include <set>
 #include <thread>
 
@@ -21,6 +22,11 @@ All rights reserved (see LICENSE).
 #include "structures/vroom/eval.h"
 #include "structures/vroom/input/input.h"
 #include "structures/vroom/solution/solution.h"
+
+#ifdef LOG_LS
+#include "algorithms/local_search/log_local_search.h"
+#include "utils/output_json.h"
+#endif
 
 namespace vroom {
 
@@ -31,7 +37,8 @@ protected:
 
   template <class Route, class LocalSearch>
   Solution solve(
-    unsigned exploration_level,
+    unsigned nb_searches,
+    unsigned depth,
     unsigned nb_threads,
     const Timeout& timeout,
     const std::vector<HeuristicParameters>& h_param,
@@ -43,34 +50,38 @@ protected:
                              : (_input.has_homogeneous_locations())
                                ? homogeneous_parameters
                                : heterogeneous_parameters;
-    unsigned max_nb_jobs_removal = exploration_level;
-    unsigned nb_init_solutions = h_param.size();
+    assert(nb_searches != 0);
+    nb_searches =
+      std::min(nb_searches, static_cast<unsigned>(parameters.size()));
 
-    if (nb_init_solutions == 0) {
-      // Local search parameter.
-      nb_init_solutions = 4 * (exploration_level + 1);
-      if (exploration_level >= 4) {
-        nb_init_solutions += 4;
-      }
-      if (exploration_level == MAX_EXPLORATION_LEVEL) {
-        nb_init_solutions += 4;
-      }
-    }
-    assert(nb_init_solutions <= parameters.size());
-
-    // Build empty solutions to be filled by heuristics.
-    std::vector<Route> empty_sol;
-    empty_sol.reserve(_input.vehicles.size());
+    // Build initial solution to be filled by heuristics. Solution is
+    // empty at first but populated with input data if provided.
+    std::vector<Route> init_sol;
+    init_sol.reserve(_input.vehicles.size());
 
     for (Index v = 0; v < _input.vehicles.size(); ++v) {
-      empty_sol.emplace_back(_input, v, _input.zero_amount().size());
+      init_sol.emplace_back(_input, v, _input.zero_amount().size());
     }
 
-    std::vector<std::vector<Route>> solutions(nb_init_solutions, empty_sol);
+    std::unordered_set<Index> init_assigned;
+    if (_input.has_initial_routes()) {
+      init_assigned = heuristics::set_initial_routes<Route>(_input, init_sol);
+    }
 
-    // Heuristics operate on all jobs.
-    std::vector<Index> jobs_ranks(_input.jobs.size());
-    std::iota(jobs_ranks.begin(), jobs_ranks.end(), 0);
+    std::vector<std::vector<Route>> solutions(nb_searches, init_sol);
+
+#ifdef LOG_LS
+    std::vector<ls::log::Dump> ls_dumps;
+    ls_dumps.reserve(nb_searches);
+#endif
+
+    // Heuristics operate on all assigned jobs.
+    std::set<Index> unassigned;
+    std::ranges::copy_if(std::views::iota(0u, _input.jobs.size()),
+                         std::inserter(unassigned, unassigned.begin()),
+                         [&init_assigned](const Index j) {
+                           return !init_assigned.contains(j);
+                         });
 
     // Heuristics operate on all vehicles.
     std::vector<Index> vehicles_ranks(_input.vehicles.size());
@@ -79,8 +90,12 @@ protected:
     // Split the heuristic parameters among threads.
     std::vector<std::vector<std::size_t>>
       thread_ranks(nb_threads, std::vector<std::size_t>());
-    for (std::size_t i = 0; i < nb_init_solutions; ++i) {
+    for (std::size_t i = 0; i < nb_searches; ++i) {
       thread_ranks[i % nb_threads].push_back(i);
+
+#ifdef LOG_LS
+      ls_dumps.push_back({parameters[i], {}});
+#endif
     }
 
     std::exception_ptr ep = nullptr;
@@ -93,53 +108,39 @@ protected:
 
           Eval h_eval;
           switch (p.heuristic) {
-          case HEURISTIC::INIT_ROUTES:
-            heuristics::initial_routes<Route>(_input, solutions[rank]);
-            break;
           case HEURISTIC::BASIC:
             h_eval = heuristics::basic<Route>(_input,
                                               solutions[rank],
-                                              jobs_ranks.cbegin(),
-                                              jobs_ranks.cend(),
-                                              vehicles_ranks.cbegin(),
-                                              vehicles_ranks.cend(),
+                                              unassigned,
+                                              vehicles_ranks,
                                               p.init,
                                               p.regret_coeff,
                                               p.sort);
             break;
           case HEURISTIC::DYNAMIC:
-            h_eval =
-              heuristics::dynamic_vehicle_choice<Route>(_input,
-                                                        solutions[rank],
-                                                        jobs_ranks.cbegin(),
-                                                        jobs_ranks.cend(),
-                                                        vehicles_ranks.cbegin(),
-                                                        vehicles_ranks.cend(),
-                                                        p.init,
-                                                        p.regret_coeff,
-                                                        p.sort);
+            h_eval = heuristics::dynamic_vehicle_choice<Route>(_input,
+                                                               solutions[rank],
+                                                               unassigned,
+                                                               vehicles_ranks,
+                                                               p.init,
+                                                               p.regret_coeff,
+                                                               p.sort);
             break;
           }
 
-          if (!_input.has_homogeneous_costs() &&
-              p.heuristic != HEURISTIC::INIT_ROUTES && h_param.empty() &&
+          if (!_input.has_homogeneous_costs() && h_param.empty() &&
               p.sort == SORT::AVAILABILITY) {
             // Worth trying another vehicle ordering scheme in
             // heuristic.
-            std::vector<Route> other_sol = empty_sol;
+            std::vector<Route> other_sol = init_sol;
 
             Eval h_other_eval;
             switch (p.heuristic) {
-            case HEURISTIC::INIT_ROUTES:
-              assert(false);
-              break;
             case HEURISTIC::BASIC:
               h_other_eval = heuristics::basic<Route>(_input,
                                                       other_sol,
-                                                      jobs_ranks.cbegin(),
-                                                      jobs_ranks.cend(),
-                                                      vehicles_ranks.cbegin(),
-                                                      vehicles_ranks.cend(),
+                                                      unassigned,
+                                                      vehicles_ranks,
                                                       p.init,
                                                       p.regret_coeff,
                                                       SORT::COST);
@@ -148,11 +149,8 @@ protected:
               h_other_eval =
                 heuristics::dynamic_vehicle_choice<Route>(_input,
                                                           other_sol,
-                                                          jobs_ranks.cbegin(),
-                                                          jobs_ranks.cend(),
-                                                          vehicles_ranks
-                                                            .cbegin(),
-                                                          vehicles_ranks.cend(),
+                                                          unassigned,
+                                                          vehicles_ranks,
                                                           p.init,
                                                           p.regret_coeff,
                                                           SORT::COST);
@@ -161,6 +159,9 @@ protected:
 
             if (h_other_eval < h_eval) {
               solutions[rank] = std::move(other_sol);
+#ifdef LOG_LS
+              ls_dumps[rank].heuristic_parameters.sort = SORT::COST;
+#endif
             }
           }
         }
@@ -188,7 +189,7 @@ protected:
     }
 
     // Filter out duplicate heuristics solutions.
-    std::set<utils::SolutionIndicators<Route>> unique_indicators;
+    std::set<utils::SolutionIndicators> unique_indicators;
     std::vector<unsigned> to_remove;
     to_remove.reserve(solutions.size());
 
@@ -203,11 +204,14 @@ protected:
     for (auto remove_rank = to_remove.rbegin(); remove_rank != to_remove.rend();
          remove_rank++) {
       solutions.erase(solutions.begin() + *remove_rank);
+#ifdef LOG_LS
+      ls_dumps.erase(ls_dumps.begin() + *remove_rank);
+#endif
     }
 
     // Split local searches across threads.
     unsigned nb_solutions = solutions.size();
-    std::vector<utils::SolutionIndicators<Route>> sol_indicators(nb_solutions);
+    std::vector<utils::SolutionIndicators> sol_indicators(nb_solutions);
 #ifdef LOG_LS_OPERATORS
     std::vector<std::array<ls::OperatorStats, OperatorName::MAX>> ls_stats(
       nb_solutions);
@@ -228,16 +232,16 @@ protected:
 
         for (auto rank : sol_ranks) {
           // Local search phase.
-          LocalSearch ls(_input,
-                         solutions[rank],
-                         max_nb_jobs_removal,
-                         search_time);
+          LocalSearch ls(_input, solutions[rank], depth, search_time);
           ls.run();
 
           // Store solution indicators.
           sol_indicators[rank] = ls.indicators();
 #ifdef LOG_LS_OPERATORS
           ls_stats[rank] = ls.get_stats();
+#endif
+#ifdef LOG_LS
+          ls_dumps[rank].steps = ls.get_steps();
 #endif
         }
       } catch (...) {
@@ -267,6 +271,10 @@ protected:
     utils::log_LS_operators(ls_stats);
 #endif
 
+#ifdef LOG_LS
+    io::write_LS_logs_to_json(ls_dumps);
+#endif
+
     auto best_indic =
       std::min_element(sol_indicators.cbegin(), sol_indicators.cend());
 
@@ -282,7 +290,8 @@ public:
   virtual ~VRP();
 
   virtual Solution
-  solve(unsigned exploration_level,
+  solve(unsigned nb_searches,
+        unsigned depth,
         unsigned nb_threads,
         const Timeout& timeout,
         const std::vector<HeuristicParameters>& h_param) const = 0;

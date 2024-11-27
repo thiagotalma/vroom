@@ -37,8 +37,9 @@ std::string ValhallaWrapper::get_matrix_query(
   // List locations.
   std::string all_locations;
   for (auto const& location : locations) {
-    all_locations +=
-      std::format(R"({{"lon":{},"lat":{}}},)", location.lon(), location.lat());
+    all_locations += std::format(R"({{"lon":{:.6f},"lat":{:.6f}}},)",
+                                 location.lon(),
+                                 location.lat());
   }
   all_locations.pop_back(); // Remove trailing ','.
 
@@ -62,7 +63,7 @@ ValhallaWrapper::get_route_query(const std::vector<Location>& locations) const {
     "GET /" + _server.path + _route_service + "?json={\"locations\":[";
 
   for (auto const& location : locations) {
-    query += std::format(R"({{"lon":{},"lat":{},"type":"break"}},)",
+    query += std::format(R"({{"lon":{:.6f},"lat":{:.6f},"type":"break"}},)",
                          location.lon(),
                          location.lat());
   }
@@ -148,9 +149,25 @@ UserDistance ValhallaWrapper::get_distance_value(
                                     matrix_entry["distance"].GetDouble());
 }
 
-unsigned
-ValhallaWrapper::get_legs_number(const rapidjson::Value& result) const {
-  return result["trip"]["legs"].Size();
+const rapidjson::Value&
+ValhallaWrapper::get_legs(const rapidjson::Value& result) const {
+  assert(result.HasMember("trip") && result["trip"].HasMember("legs") and
+         result["trip"]["legs"].IsArray());
+
+  return result["trip"]["legs"];
+}
+
+UserDuration
+ValhallaWrapper::get_leg_duration(const rapidjson::Value& leg) const {
+  assert(leg.HasMember("summary") && leg["summary"].HasMember("time"));
+  return utils::round<UserDuration>(leg["summary"]["time"].GetDouble());
+}
+
+UserDistance
+ValhallaWrapper::get_leg_distance(const rapidjson::Value& leg) const {
+  assert(leg.HasMember("summary") && leg["summary"].HasMember("length"));
+  return utils::round<UserDistance>(km_to_m *
+                                    leg["summary"]["length"].GetDouble());
 }
 
 std::string ValhallaWrapper::get_geometry(rapidjson::Value& result) const {

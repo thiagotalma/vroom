@@ -12,11 +12,13 @@ All rights reserved (see LICENSE).
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include "routing/wrapper.h"
 #include "structures/generic/matrix.h"
 #include "structures/typedefs.h"
+#include "structures/vroom/matrices.h"
 #include "structures/vroom/solution/solution.h"
 #include "structures/vroom/vehicle.h"
 
@@ -77,15 +79,22 @@ private:
   bool _all_locations_have_coords{true};
   std::vector<std::vector<Eval>> _jobs_vehicles_evals;
 
-  unsigned _amount_size{0};
-  Amount _zero{0};
+  // Used in plan mode since we store route geometries while
+  // generating sparse matrices.
+  std::vector<std::string> _vehicles_geometry;
+
+  std::optional<unsigned> _amount_size;
+  Amount _zero;
 
   const io::Servers _servers;
   const ROUTER _router;
 
   std::unique_ptr<VRP> get_problem() const;
 
+  void check_amount_size(const Amount& amount);
   void check_job(Job& job);
+
+  void run_basic_checks() const;
 
   UserCost check_cost_bound(const Matrix<UserCost>& matrix) const;
 
@@ -97,7 +106,11 @@ private:
   void set_jobs_vehicles_evals();
   void set_vehicle_steps_ranks();
   void init_missing_matrices(const std::string& profile);
-  void set_matrices(unsigned nb_thread);
+
+  routing::Matrices get_matrices_by_profile(const std::string& profile,
+                                            bool sparse_filling);
+
+  void set_matrices(unsigned nb_thread, bool sparse_filling = false);
 
   void add_routing_wrapper(const std::string& profile);
 
@@ -114,10 +127,9 @@ public:
         ROUTER router = ROUTER::OSRM,
         bool apply_TSPFix = false);
 
-  void set_amount_size(unsigned amount_size);
-
   unsigned get_amount_size() const {
-    return _amount_size;
+    assert(_amount_size.has_value());
+    return _amount_size.value();
   }
 
   void set_geometry(bool geometry);
@@ -172,6 +184,8 @@ public:
 
   bool has_homogeneous_costs() const;
 
+  bool has_initial_routes() const;
+
   bool vehicle_ok_with_job(size_t v_index, size_t j_index) const {
     return static_cast<bool>(_vehicle_to_job_compatibility[v_index][j_index]);
   }
@@ -179,7 +193,8 @@ public:
   // Returns true iff both vehicles have common job candidates.
   bool vehicle_ok_with_vehicle(Index v1_index, Index v2_index) const;
 
-  Solution solve(unsigned exploration_level,
+  Solution solve(unsigned nb_searches,
+                 unsigned depth,
                  unsigned nb_thread,
                  const Timeout& timeout = Timeout(),
                  const std::vector<HeuristicParameters>& h_param =
