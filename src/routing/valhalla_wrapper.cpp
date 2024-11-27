@@ -38,14 +38,56 @@ std::string ValhallaWrapper::get_matrix_query(
   std::string all_locations;
   for (auto const& location : locations) {
     all_locations += "{\"lon\":" + std::to_string(location.lon()) + "," +
-                     "\"lat\":" + std::to_string(location.lat()) + "},";
+                     "\"lat\":" + std::to_string(location.lat()) +
+                     R"(,"type":"break_through"},)";
+
   }
   all_locations.pop_back(); // Remove trailing ','.
 
   query += "{\"sources\":[" + all_locations;
   query += "],\"targets\":[" + all_locations;
-  query += R"(],"costing":")" + profile + "\"}";
+  query += R"(],"costing":")" + profile + "\"";
+  query += R"(,"costing_options":{"truck":{)";
+  query += R"("exclude_unpaved":1)";
+  query += R"(,"maneuver_penalty":40)";
+  query += R"(,"country_crossing_penalty":0)";
+  query += R"(,"country_crossing_cost":600)";
+  query += R"(,"length":21.5)";
+  query += R"(,"width":2.6)";
+  query += R"(,"height":4.11)";
+  query += R"(,"weight":21.77)";
+  query += R"(,"axle_load":9)";
+  query += R"(,"hazmat":false)";
+  query += R"(,"use_highways":1)";
+  query += R"(,"use_tolls":1)";
+  query += R"(,"use_ferry":1)";
+  query += R"(,"ferry_cost":300)";
+  query += R"(,"use_living_streets":1)";
+  query += R"(,"use_tracks":1)";
+  query += R"(,"private_access_penalty":450)";
+  query += R"(,"ignore_closures":false)";
+  query += R"(,"ignore_restrictions":false)";
+  query += R"(,"ignore_access":false)";
+  query += R"(,"closure_factor":9)";
+  query += R"(,"service_penalty":15)";
+  query += R"(,"service_factor":1)";
+  query += R"(,"shortest":false)";
+  query += R"(,"exclude_cash_only_tolls":false)";
+  query += R"(,"top_speed":80)";
+  query += R"(,"axle_count":5)";
+  query += R"(,"fixed_speed":0)";
+  query += R"(,"toll_booth_penalty":0)";
+  query += R"(,"toll_booth_cost":15)";
+  query += R"(,"gate_penalty":300)";
+  query += R"(,"gate_cost":30)";
+  query += R"(,"include_hov2":false)";
+  query += R"(,"include_hov3":false)";
+  query += R"(,"include_hot":false)";
+  query += R"(,"disable_hierarchy_pruning":false)";
+  query += R"(}})";
 
+//  query += R"(,"costing_options":{"truck":{,,,,,,,,}})";
+  query += "}";
   query += " HTTP/1.1\r\n";
   query += "Host: " + _server.host + "\r\n";
   query += "Accept: */*\r\n";
@@ -63,11 +105,49 @@ ValhallaWrapper::get_route_query(const std::vector<Location>& locations) const {
   for (auto const& location : locations) {
     query += "{\"lon\":" + std::to_string(location.lon()) + "," +
              "\"lat\":" + std::to_string(location.lat()) +
-             R"(,"type":"break"},)";
+             R"(,"type":"break_through"},)";
   }
   query.pop_back(); // Remove trailing ','.
 
   query += R"(],"costing":")" + profile + "\"";
+  query += R"(,"costing_options":{"truck":{)";
+  query += R"("exclude_unpaved":1)";
+  query += R"(,"maneuver_penalty":40)";
+  query += R"(,"country_crossing_penalty":0)";
+  query += R"(,"country_crossing_cost":600)";
+  query += R"(,"length":21.5)";
+  query += R"(,"width":2.6)";
+  query += R"(,"height":4.11)";
+  query += R"(,"weight":21.77)";
+  query += R"(,"axle_load":9)";
+  query += R"(,"hazmat":false)";
+  query += R"(,"use_highways":1)";
+  query += R"(,"use_tolls":1)";
+  query += R"(,"use_ferry":1)";
+  query += R"(,"ferry_cost":300)";
+  query += R"(,"use_living_streets":1)";
+  query += R"(,"use_tracks":1)";
+  query += R"(,"private_access_penalty":450)";
+  query += R"(,"ignore_closures":false)";
+  query += R"(,"ignore_restrictions":false)";
+  query += R"(,"ignore_access":false)";
+  query += R"(,"closure_factor":9)";
+  query += R"(,"service_penalty":15)";
+  query += R"(,"service_factor":1)";
+  query += R"(,"shortest":false)";
+  query += R"(,"exclude_cash_only_tolls":false)";
+  query += R"(,"top_speed":80)";
+  query += R"(,"axle_count":5)";
+  query += R"(,"fixed_speed":0)";
+  query += R"(,"toll_booth_penalty":0)";
+  query += R"(,"toll_booth_cost":15)";
+  query += R"(,"gate_penalty":300)";
+  query += R"(,"gate_cost":30)";
+  query += R"(,"include_hov2":false)";
+  query += R"(,"include_hov3":false)";
+  query += R"(,"include_hot":false)";
+  query += R"(,"disable_hierarchy_pruning":false)";
+  query += R"(}})";
   query += "," + _routing_args;
   query += "}";
 
