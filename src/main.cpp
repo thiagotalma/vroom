@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -17,7 +17,6 @@ All rights reserved (see LICENSE).
 
 #include "../include/cxxopts/include/cxxopts.hpp"
 
-#include "problems/vrp.h"
 #include "structures/cl_args.h"
 #include "utils/exception.h"
 #include "utils/helpers.h"
@@ -32,11 +31,10 @@ int main(int argc, char** argv) {
   std::string router_arg;
   std::string limit_arg;
   std::string output_file;
-  std::vector<std::string> heuristic_params_arg;
   unsigned exploration_level;
 
   cxxopts::Options options("vroom",
-                           "VROOM Copyright (C) 2015-2024, Julien Coupey\n"
+                           "VROOM Copyright (C) 2015-2025, Julien Coupey\n"
                            "Version: " +
                              vroom::get_version() +
                              "\n\n"
@@ -86,22 +84,10 @@ int main(int argc, char** argv) {
      cxxopts::value<std::string>(cl_args.input));
 
   // we don't want to print debug args on --help
-  std::optional<unsigned> debug_depth;
-  std::optional<unsigned> debug_nb_searches;
-
   options.add_options("debug_group")
-    ("e,heuristic-param",
-     "Heuristic parameter",
-     cxxopts::value<std::vector<std::string>>(heuristic_params_arg))
     ("f,apply-tsp-fix",
      "apply experimental TSPFix local search operator",
-     cxxopts::value<bool>(cl_args.apply_TSPFix)->default_value("false"))
-    ("d,depth",
-     "search depth",
-     cxxopts::value<std::optional<unsigned>>(debug_depth))
-    ("s,nb-searches",
-     "number of searches to perform in parallel",
-     cxxopts::value<std::optional<unsigned>>(debug_nb_searches));
+     cxxopts::value<bool>(cl_args.apply_TSPFix)->default_value("false"));
 
   // clang-format on
   try {
@@ -164,13 +150,7 @@ int main(int argc, char** argv) {
     vroom::io::update_port(cl_args.servers, port);
   }
   exploration_level = std::min(exploration_level, vroom::MAX_EXPLORATION_LEVEL);
-  vroom::io::set_exploration_level(cl_args, exploration_level);
-  if (debug_depth) {
-    cl_args.depth = debug_depth.value();
-  }
-  if (debug_nb_searches) {
-    cl_args.nb_searches = debug_nb_searches.value();
-  }
+  cl_args.set_exploration_level(exploration_level);
 
   // Determine routing engine (defaults to ROUTER::OSRM).
   if (router_arg == "libosrm") {
@@ -189,25 +169,10 @@ int main(int argc, char** argv) {
     cl_args.router = vroom::ROUTER::OSRM;
   }
 
-  try {
-    // Force heuristic parameters from the command-line, useful for
-    // debugging.
-    std::ranges::transform(heuristic_params_arg,
-                           std::back_inserter(cl_args.h_params),
-                           [](const auto& str_param) {
-                             return vroom::utils::str_to_heuristic_param(
-                               str_param);
-                           });
-  } catch (const vroom::Exception& e) {
-    std::cerr << "[Error] " << e.message << std::endl;
-    vroom::io::write_to_json(e, cl_args.output_file);
-    exit(e.error_code);
-  }
-
   // Get input problem from first input file, then positional arg,
   // then stdin.
   if (!cl_args.input_file.empty()) {
-    std::ifstream ifs(cl_args.input_file);
+    const std::ifstream ifs(cl_args.input_file);
     if (!ifs) {
       const auto exc =
         vroom::InputException("Can't read file: " + cl_args.input_file);
@@ -234,13 +199,12 @@ int main(int argc, char** argv) {
                                   cl_args.apply_TSPFix);
     vroom::io::parse(problem_instance, cl_args.input, cl_args.geometry);
 
-    vroom::Solution sol = (cl_args.check)
-                            ? problem_instance.check(cl_args.nb_threads)
-                            : problem_instance.solve(cl_args.nb_searches,
-                                                     cl_args.depth,
-                                                     cl_args.nb_threads,
-                                                     cl_args.timeout,
-                                                     cl_args.h_params);
+    const vroom::Solution sol = (cl_args.check)
+                                  ? problem_instance.check(cl_args.nb_threads)
+                                  : problem_instance.solve(cl_args.nb_searches,
+                                                           cl_args.depth,
+                                                           cl_args.nb_threads,
+                                                           cl_args.timeout);
 
     // Write solution.
     vroom::io::write_to_json(sol,

@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -29,22 +29,23 @@ struct VehicleCosts {
   const Cost fixed;
   const Cost per_hour;
   const Cost per_km;
+  const Cost per_task_hour;
 
-  VehicleCosts(UserCost fixed = 0,
-               UserCost per_hour = DEFAULT_COST_PER_HOUR,
-               UserCost per_km = DEFAULT_COST_PER_KM)
+  explicit VehicleCosts(UserCost fixed = 0,
+                        UserCost per_hour = DEFAULT_COST_PER_HOUR,
+                        UserCost per_km = DEFAULT_COST_PER_KM,
+                        UserCost per_task_hour = DEFAULT_COST_PER_TASK_HOUR)
     : fixed(utils::scale_from_user_cost(fixed)),
       per_hour(static_cast<Cost>(per_hour)),
-      per_km(static_cast<Cost>(per_km)){};
+      per_km(static_cast<Cost>(per_km)),
+      per_task_hour(static_cast<Cost>(per_task_hour)){};
 
-  friend bool operator==(const VehicleCosts& lhs, const VehicleCosts& rhs) {
-    return lhs.fixed == rhs.fixed && lhs.per_hour == rhs.per_hour &&
-           lhs.per_km == rhs.per_km;
-  }
+  friend bool operator==(const VehicleCosts& lhs,
+                         const VehicleCosts& rhs) = default;
 
   friend bool operator<(const VehicleCosts& lhs, const VehicleCosts& rhs) {
-    return std::tie(lhs.fixed, lhs.per_hour, lhs.per_km) <
-           std::tie(rhs.fixed, rhs.per_hour, rhs.per_km);
+    return std::tie(lhs.fixed, lhs.per_hour, lhs.per_km, lhs.per_task_hour) <
+           std::tie(rhs.fixed, rhs.per_hour, rhs.per_km, rhs.per_task_hour);
   }
 };
 
@@ -65,6 +66,8 @@ struct Vehicle {
   const Distance max_distance;
   const bool has_break_max_load;
   std::vector<VehicleStep> steps;
+  Index type;
+  const std::string type_str;
   std::unordered_map<Id, Index> break_id_to_rank;
 
   Vehicle(
@@ -84,7 +87,8 @@ struct Vehicle {
       std::optional<UserDuration>(),
     const std::optional<UserDistance>& max_distance =
       std::optional<UserDistance>(),
-    const std::vector<VehicleStep>& input_steps = std::vector<VehicleStep>());
+    const std::vector<VehicleStep>& input_steps = std::vector<VehicleStep>(),
+    std::string type_str = NO_TYPE);
 
   bool has_start() const;
 
@@ -100,6 +104,14 @@ struct Vehicle {
 
   Cost fixed_cost() const {
     return costs.fixed;
+  }
+
+  Cost task_cost(Duration task_duration) const {
+    return costs.per_task_hour * task_duration;
+  }
+
+  Eval task_eval(Duration task_duration) const {
+    return Eval(task_cost(task_duration), 0, 0, task_duration);
   }
 
   Duration duration(Index i, Index j) const {

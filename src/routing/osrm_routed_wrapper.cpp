@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -33,8 +33,9 @@ OsrmRoutedWrapper::build_query(const std::vector<Location>& locations,
 
   // Build query part for snapping restriction.
   std::string radiuses = "radiuses=";
-  radiuses.reserve(9 + locations.size() *
-                         (DEFAULT_OSRM_SNAPPING_RADIUS.size() + 1));
+  radiuses.reserve(radiuses.size() +
+                   locations.size() *
+                     (DEFAULT_OSRM_SNAPPING_RADIUS.size() + 1));
 
   // Adding locations and radiuses values.
   for (auto const& location : locations) {

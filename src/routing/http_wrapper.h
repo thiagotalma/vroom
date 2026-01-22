@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -58,7 +58,7 @@ protected:
   void update_sparse_matrix(const std::vector<Location>& route_locs,
                             Matrices& m,
                             std::mutex& matrix_m,
-                            std::string& vehicles_geometry) const override;
+                            std::string& vehicle_geometry) const override;
 
   virtual bool
   duration_value_is_null(const rapidjson::Value& matrix_entry) const {

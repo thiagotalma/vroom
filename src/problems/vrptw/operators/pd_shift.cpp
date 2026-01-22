@@ -2,14 +2,13 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include "problems/vrptw/operators/pd_shift.h"
 #include "algorithms/local_search/insertion_search.h"
-#include "utils/helpers.h"
 
 namespace vroom::vrptw {
 

@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -40,8 +40,9 @@ Eval dynamic_vehicle_choice(const Input& input,
 
 // Populate routes with user-defined vehicle steps.
 template <class Route>
-std::unordered_set<Index> set_initial_routes(const Input& input,
-                                             std::vector<Route>& routes);
+void set_initial_routes(const Input& input,
+                        std::vector<Route>& routes,
+                        std::unordered_set<Index>& assigned);
 
 } // namespace vroom::heuristics
 

@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -43,8 +43,8 @@ compute_best_insertion_single(const Input& input,
     for (Index rank = sol_state.insertion_ranks_begin[v][j];
          rank < sol_state.insertion_ranks_end[v][j];
          ++rank) {
-      Eval current_eval =
-        utils::addition_cost(input, j, v_target, route.route, rank);
+      const Eval current_eval =
+        utils::addition_eval(input, j, v_target, route.route, rank);
       if (current_eval.cost < result.eval.cost &&
           v_target.ok_for_range_bounds(sol_state.route_evals[v] +
                                        current_eval) &&
@@ -113,14 +113,14 @@ RouteInsertion compute_best_insertion_pd(const Input& input,
   bool found_valid = false;
   for (unsigned d_rank = begin_d_rank; d_rank < end_d_rank; ++d_rank) {
     d_adds[d_rank] =
-      utils::addition_cost(input, j + 1, v_target, route.route, d_rank);
+      utils::addition_eval(input, j + 1, v_target, route.route, d_rank);
     if (result.eval < d_adds[d_rank]) {
       valid_delivery_insertions[d_rank] = false;
     } else {
       valid_delivery_insertions[d_rank] =
         route.is_valid_addition_for_tw_without_max_load(input, j + 1, d_rank);
     }
-    found_valid |= valid_delivery_insertions[d_rank];
+    found_valid |= static_cast<bool>(valid_delivery_insertions[d_rank]);
   }
 
   if (!found_valid) {
@@ -131,8 +131,8 @@ RouteInsertion compute_best_insertion_pd(const Input& input,
   for (Index pickup_r = sol_state.insertion_ranks_begin[v][j];
        pickup_r < sol_state.insertion_ranks_end[v][j];
        ++pickup_r) {
-    Eval p_add =
-      utils::addition_cost(input, j, v_target, route.route, pickup_r);
+    const Eval p_add =
+      utils::addition_eval(input, j, v_target, route.route, pickup_r);
     if (result.eval < p_add) {
       // Even without delivery insertion more expensive than current best.
       continue;
@@ -173,7 +173,7 @@ RouteInsertion compute_best_insertion_pd(const Input& input,
 
       Eval pd_eval;
       if (pickup_r == delivery_r) {
-        pd_eval = utils::addition_cost(input,
+        pd_eval = utils::addition_eval(input,
                                        j,
                                        v_target,
                                        route.route,

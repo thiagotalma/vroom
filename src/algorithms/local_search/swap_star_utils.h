@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -35,7 +35,7 @@ struct SwapChoice {
 
   SwapChoice() = default;
 
-  SwapChoice(Eval gain,
+  SwapChoice(const Eval& gain,
              Index s_rank,
              Index t_rank,
              Index insertion_in_source,
@@ -219,7 +219,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
   for (unsigned s_rank = 0; s_rank < source.route.size(); ++s_rank) {
     const auto& target_insertions = top_insertions_in_target[s_rank];
-    if (target_insertions[0].cost == NO_EVAL) {
+    if (target_insertions[0].eval == NO_EVAL) {
       continue;
     }
 
@@ -235,7 +235,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
     for (unsigned t_rank = 0; t_rank < target.route.size(); ++t_rank) {
       const auto& source_insertions = top_insertions_in_source[t_rank];
-      if (source_insertions[0].cost == NO_EVAL) {
+      if (source_insertions[0].eval == NO_EVAL) {
         continue;
       }
 
@@ -252,21 +252,22 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
       }
 
       const auto target_in_place_delta =
-        utils::in_place_delta_cost(input,
+        utils::in_place_delta_eval(input,
                                    source.route[s_rank],
                                    t_v,
                                    target.route,
                                    t_rank);
 
       const auto source_in_place_delta =
-        utils::in_place_delta_cost(input,
+        utils::in_place_delta_eval(input,
                                    target.route[t_rank],
                                    s_v,
                                    source.route,
                                    s_rank);
 
       std::vector<SwapChoice> swap_choice_options;
-      swap_choice_options.reserve(16);
+      constexpr std::size_t MAX_SWAP_CHOICES = 16;
+      swap_choice_options.reserve(MAX_SWAP_CHOICES);
 
       // Options for in-place insertion in source route include
       // in-place insertion in target route and other relevant
@@ -294,8 +295,8 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
         for (const auto& ti : target_insertions) {
           if ((ti.rank != t_rank) && (ti.rank != t_rank + 1) &&
-              (ti.cost != NO_EVAL)) {
-            const Eval t_gain = target_delta - ti.cost;
+              (ti.eval != NO_EVAL)) {
+            const Eval t_gain = target_delta - ti.eval;
             current_gain = in_place_s_gain + t_gain;
             if (best_gain < current_gain &&
                 t_v.ok_for_range_bounds(t_eval - t_gain)) {
@@ -319,8 +320,8 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
       // target_insertions.
       for (const auto& si : source_insertions) {
         if ((si.rank != s_rank) && (si.rank != s_rank + 1) &&
-            (si.cost != NO_EVAL)) {
-          const Eval s_gain = source_delta - si.cost;
+            (si.eval != NO_EVAL)) {
+          const Eval s_gain = source_delta - si.eval;
 
           if (!s_v.ok_for_range_bounds(s_eval - s_gain)) {
             // Don't bother further checking if max travel time
@@ -344,8 +345,8 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
           for (const auto& ti : target_insertions) {
             if ((ti.rank != t_rank) && (ti.rank != t_rank + 1) &&
-                (ti.cost != NO_EVAL)) {
-              const Eval t_gain = target_delta - ti.cost;
+                (ti.eval != NO_EVAL)) {
+              const Eval t_gain = target_delta - ti.eval;
               current_gain = s_gain + t_gain;
               if (best_gain < current_gain &&
                   t_v.ok_for_range_bounds(t_eval - t_gain)) {
@@ -366,7 +367,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
       std::ranges::sort(swap_choice_options, SwapChoiceCmp);
 
-      assert(swap_choice_options.size() <= 16);
+      assert(swap_choice_options.size() <= MAX_SWAP_CHOICES);
 
       for (const auto& sc : swap_choice_options) {
         // Browse interesting options by decreasing gain and check for

@@ -5,11 +5,12 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -17,13 +18,9 @@ All rights reserved (see LICENSE).
 #include <list>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#ifdef _MSC_VER
-// include support for "and"/"or"
-#include <iso646.h>
-#endif
 
 namespace vroom {
 
@@ -58,6 +55,7 @@ constexpr UserCost INFINITE_USER_COST =
   3 * (std::numeric_limits<UserCost>::max() / 4);
 
 const std::string DEFAULT_PROFILE = "car";
+const std::string NO_TYPE = "";
 const std::string DEFAULT_OSRM_SNAPPING_RADIUS = "35000";
 constexpr double DEFAULT_LIBOSRM_SNAPPING_RADIUS = 35000;
 
@@ -76,6 +74,7 @@ constexpr Cost COST_FACTOR = 3600;
 // outputting exact same values for duration and cost if per_hour
 // values are not set.
 constexpr UserCost DEFAULT_COST_PER_HOUR = 3600;
+constexpr UserCost DEFAULT_COST_PER_TASK_HOUR = 0;
 constexpr UserCost DEFAULT_COST_PER_KM = 0;
 
 constexpr Priority MAX_PRIORITY = 100;
@@ -84,19 +83,20 @@ constexpr unsigned MAX_EXPLORATION_LEVEL = 5;
 
 constexpr unsigned DEFAULT_EXPLORATION_LEVEL = 5;
 constexpr unsigned DEFAULT_THREADS_NUMBER = 4;
+constexpr unsigned MAX_ROUTING_THREADS = 32;
 
 constexpr auto DEFAULT_MAX_TASKS = std::numeric_limits<size_t>::max();
 constexpr auto DEFAULT_MAX_TRAVEL_TIME = std::numeric_limits<Duration>::max();
 constexpr auto DEFAULT_MAX_DISTANCE = std::numeric_limits<Distance>::max();
 
 // Available routing engines.
-enum class ROUTER { OSRM, LIBOSRM, ORS, VALHALLA };
+enum class ROUTER : std::uint8_t { OSRM, LIBOSRM, ORS, VALHALLA };
 
 // Used to describe a routing server.
 struct Server {
   std::string host;
   std::string port;
-  std::string path{""};
+  std::string path;
 
   Server() : host("0.0.0.0"), port("5000") {
   }
@@ -112,15 +112,21 @@ struct Server {
 
 // 'Single' job is a regular one-stop job without precedence
 // constraints.
-enum class JOB_TYPE { SINGLE, PICKUP, DELIVERY };
+enum class JOB_TYPE : std::uint8_t { SINGLE, PICKUP, DELIVERY };
 
 // Available location status.
-enum class STEP_TYPE { START, JOB, BREAK, END };
+enum class STEP_TYPE : std::uint8_t { START, JOB, BREAK, END };
 
 // Heuristic options.
-enum class HEURISTIC { BASIC, DYNAMIC };
-enum class INIT { NONE, HIGHER_AMOUNT, NEAREST, FURTHEST, EARLIEST_DEADLINE };
-enum class SORT { AVAILABILITY, COST };
+enum class HEURISTIC : std::uint8_t { BASIC, DYNAMIC };
+enum class INIT : std::uint8_t {
+  NONE,
+  HIGHER_AMOUNT,
+  NEAREST,
+  FURTHEST,
+  EARLIEST_DEADLINE
+};
+enum class SORT : std::uint8_t { AVAILABILITY, COST };
 
 struct HeuristicParameters {
   HEURISTIC heuristic;
@@ -137,7 +143,7 @@ struct HeuristicParameters {
 };
 
 // Possible violations.
-enum class VIOLATION {
+enum class VIOLATION : std::uint8_t {
   LEAD_TIME,
   DELAY,
   LOAD,
@@ -150,7 +156,7 @@ enum class VIOLATION {
   MAX_DISTANCE
 };
 
-enum OperatorName {
+enum OperatorName : std::uint8_t {
   UnassignedExchange,
   CrossExchange,
   MixedExchange,
@@ -173,77 +179,59 @@ enum OperatorName {
   MAX
 };
 
-#if defined(LOG_LS_OPERATORS) || defined(LOG_LS)
-const std::array<std::string, OperatorName::MAX>
-  OPERATOR_NAMES({"UnassignedExchange",
-                  "CrossExchange",
-                  "MixedExchange",
-                  "TwoOpt",
-                  "ReverseTwoOpt",
-                  "Relocate",
-                  "OrOpt",
-                  "IntraExchange",
-                  "IntraCrossExchange",
-                  "IntraMixedExchange",
-                  "IntraRelocate",
-                  "IntraOrOpt",
-                  "IntraTwoOpt",
-                  "PDShift",
-                  "RouteExchange",
-                  "SwapStar",
-                  "RouteSplit",
-                  "PriorityReplace",
-                  "TSPFix"});
-#endif
-
 // Defined based on
 // https://sonarcloud.io/organizations/vroom-project/rules?open=cpp%3AS6045&rule_key=cpp%3AS6045
 struct StringHash {
   using is_transparent = void; // enables heterogenous lookup
 
   std::size_t operator()(std::string_view sv) const {
-    std::hash<std::string_view> hasher;
+    const std::hash<std::string_view> hasher;
     return hasher(sv);
   }
 };
 
+using TypeToDurationMap =
+  std::unordered_map<std::string, Duration, StringHash, std::equal_to<>>;
+
+using TypeToUserDurationMap =
+  std::unordered_map<std::string, UserDuration, StringHash, std::equal_to<>>;
+
 namespace utils {
-constexpr inline Duration scale_from_user_duration(UserDuration d) {
+constexpr Duration scale_from_user_duration(UserDuration d) {
   return DURATION_FACTOR * static_cast<Duration>(d);
 }
 
-constexpr inline UserDuration scale_to_user_duration(Duration d) {
+inline TypeToDurationMap
+scale_from_user_duration(const TypeToUserDurationMap& user_duration_per_type) {
+  TypeToDurationMap duration_per_type;
+
+  std::ranges::transform(user_duration_per_type,
+                         std::inserter(duration_per_type,
+                                       duration_per_type.end()),
+                         [](const auto& pair) {
+                           return std::make_pair(pair.first,
+                                                 scale_from_user_duration(
+                                                   pair.second));
+                         });
+
+  return duration_per_type;
+}
+
+constexpr UserDuration scale_to_user_duration(Duration d) {
   assert(d <=
          scale_from_user_duration(std::numeric_limits<UserDuration>::max()));
   return static_cast<UserDuration>(d / DURATION_FACTOR);
 }
 
-constexpr inline Cost scale_from_user_cost(UserCost c) {
+constexpr Cost scale_from_user_cost(UserCost c) {
   return DURATION_FACTOR * COST_FACTOR * static_cast<Cost>(c);
 }
 
-constexpr inline UserCost scale_to_user_cost(Cost c) {
+constexpr UserCost scale_to_user_cost(Cost c) {
   assert(c <= scale_from_user_cost(std::numeric_limits<UserCost>::max()));
   return static_cast<UserCost>(c / (DURATION_FACTOR * COST_FACTOR));
 }
 } // namespace utils
-
-#ifdef LOG_LS_OPERATORS
-namespace ls {
-struct OperatorStats {
-  unsigned tried_moves;
-  unsigned applied_moves;
-
-  OperatorStats() : tried_moves(0), applied_moves(0) {
-  }
-
-  OperatorStats(const unsigned tried_moves, const unsigned applied_moves)
-    : tried_moves(tried_moves), applied_moves(applied_moves) {
-  }
-};
-} // namespace ls
-#endif
-
 } // namespace vroom
 
 #endif

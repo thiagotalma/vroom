@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -25,8 +25,8 @@ struct Violations {
 
   // Used for route/summary.
   Violations(
-    const UserDuration lead_time,
-    const UserDuration delay,
+    UserDuration lead_time,
+    UserDuration delay,
     std::unordered_set<VIOLATION>&& types = std::unordered_set<VIOLATION>());
 
   Violations& operator+=(const Violations& rhs);

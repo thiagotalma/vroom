@@ -2,14 +2,13 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 
 #include <glpk.h>
 
@@ -146,8 +145,9 @@ Route choose_ETA(const Input& input,
 
       const bool has_setup_time =
         !previous_index.has_value() || (previous_index.value() != job.index());
-      const auto current_action =
-        has_setup_time ? job.setup + job.service : job.service;
+      const auto current_action = has_setup_time
+                                    ? job.setups[v.type] + job.services[v.type]
+                                    : job.services[v.type];
       action_times.push_back(current_action);
       action_sum += current_action;
       relative_arrival += current_action;
@@ -298,7 +298,7 @@ Route choose_ETA(const Input& input,
         get_violation(v.breaks[step.rank].tws, earliest_date);
 
       const auto& tws = v.breaks[step.rank].tws;
-      if ((tws.size() != 1) or !tws.front().is_default()) {
+      if ((tws.size() != 1) || !tws.front().is_default()) {
         step_has_TW[s] = true;
 
         horizon_start_lead_times[s] = tws.front().start - horizon_start;
@@ -682,7 +682,7 @@ Route choose_ETA(const Input& input,
 
   // Makespan and \sum Y_i dummy constraints (used for second solving
   // phase).
-  auto name = "Makespan";
+  const auto* name = "Makespan";
   glp_set_row_name(lp, current_row, name);
   glp_set_row_bnds(lp, current_row, GLP_LO, 0, 0);
 
@@ -992,8 +992,7 @@ Route choose_ETA(const Input& input,
 
   auto status = glp_mip_status(lp);
   if (status == GLP_UNDEF || status == GLP_NOFEAS) {
-    throw InputException("Infeasible route for vehicle " +
-                         std::to_string(v.id) + ".");
+    throw InputException(std::format("Infeasible route for vehicle {}.", v.id));
   }
   // We should not get GLP_FEAS.
   assert(status == GLP_OPT);
@@ -1042,8 +1041,7 @@ Route choose_ETA(const Input& input,
 
   status = glp_mip_status(lp);
   if (status == GLP_UNDEF || status == GLP_NOFEAS) {
-    throw InputException("Infeasible route for vehicle " +
-                         std::to_string(v.id) + ".");
+    throw InputException(std::format("Infeasible route for vehicle {}.", v.id));
   }
   // We should not get GLP_FEAS.
   assert(status == GLP_OPT);
@@ -1199,11 +1197,12 @@ Route choose_ETA(const Input& input,
       const auto& job = input.jobs[job_rank];
 
       const auto current_setup =
-        (previous_location != job.index()) ? job.setup : 0;
+        (previous_location != job.index()) ? job.setups[v.type] : 0;
       previous_location = job.index();
+      const auto current_service = job.services[v.type];
 
       setup += current_setup;
-      service += job.service;
+      service += current_service;
       priority += job.priority;
 
       current_load += job.pickup;
@@ -1213,6 +1212,7 @@ Route choose_ETA(const Input& input,
 
       sol_steps.emplace_back(job,
                              utils::scale_to_user_duration(current_setup),
+                             utils::scale_to_user_duration(current_service),
                              current_load);
       auto& current = sol_steps.back();
 
@@ -1309,7 +1309,7 @@ Route choose_ETA(const Input& input,
       }
 
       previous_start = service_start;
-      previous_action = current_setup + job.service;
+      previous_action = current_setup + current_service;
       previous_travel = task_travels[task_rank];
       ++task_rank;
       ++previous_rank_in_J;
@@ -1468,15 +1468,17 @@ Route choose_ETA(const Input& input,
 
   assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
   const UserCost user_fixed_cost = utils::scale_to_user_cost(v.fixed_cost());
-  const UserCost user_cost =
+  const UserCost user_travel_cost =
     v.cost_based_on_metrics()
       ? v.cost_wrapper.user_cost_from_user_metrics(user_duration,
                                                    eval_sum.distance)
       : utils::scale_to_user_cost(eval_sum.cost);
+  const UserCost user_task_cost =
+    utils::scale_to_user_cost(v.task_cost(setup + service));
 
   return Route(v.id,
                std::move(sol_steps),
-               user_fixed_cost + user_cost,
+               user_fixed_cost + user_travel_cost + user_task_cost,
                user_duration,
                eval_sum.distance,
                utils::scale_to_user_duration(setup),

@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -106,6 +106,36 @@ inline UserDuration get_duration(const rapidjson::Value& object,
   return duration;
 }
 
+inline TypeToUserDurationMap
+get_duration_per_type(const rapidjson::Value& json_task,
+                      const char* key,
+                      const std::string& task_type) {
+  TypeToUserDurationMap type_to_user_duration;
+
+  if (json_task.HasMember(key)) {
+    if (!json_task[key].IsObject()) {
+      throw InputException(std::format("Invalid {} for {} {}.",
+                                       key,
+                                       task_type,
+                                       json_task["id"].GetUint64()));
+    }
+
+    for (const auto& pair : json_task[key].GetObject()) {
+      if (!pair.value.IsUint()) {
+        throw InputException(std::format("Invalid value in {} for {} {}.",
+                                         key,
+                                         task_type,
+                                         json_task["id"].GetUint64()));
+      }
+
+      type_to_user_duration.try_emplace(pair.name.GetString(),
+                                        pair.value.GetUint());
+    }
+  }
+
+  return type_to_user_duration;
+}
+
 inline Priority get_priority(const rapidjson::Value& object) {
   Priority priority = 0;
   if (object.HasMember("priority")) {
@@ -151,10 +181,12 @@ inline void check_shipment(const rapidjson::Value& v) {
   }
 }
 
-inline void check_location(const rapidjson::Value& v, const std::string& type) {
+inline void check_location(const rapidjson::Value& v,
+                           const std::string& task_type) {
   if (!v.HasMember("location") || !v["location"].IsArray()) {
-    throw InputException(
-      std::format("Invalid location for {} {}.", type, v["id"].GetUint64()));
+    throw InputException(std::format("Invalid location for {} {}.",
+                                     task_type,
+                                     v["id"].GetUint64()));
   }
 }
 
@@ -173,13 +205,14 @@ inline TimeWindow get_vehicle_time_window(const rapidjson::Value& v) {
   return v_tw;
 }
 
-inline std::vector<TimeWindow> get_time_windows(const rapidjson::Value& o) {
+inline std::vector<TimeWindow> get_time_windows(const rapidjson::Value& o,
+                                                const std::string& task_type) {
   std::vector<TimeWindow> tws;
   if (o.HasMember("time_windows")) {
-    if (!o["time_windows"].IsArray() || o["time_windows"].Empty()) {
-      throw InputException(
-        std::format("Invalid time_windows array for object {}.",
-                    o["id"].GetUint64()));
+    if (!o["time_windows"].IsArray()) {
+      throw InputException(std::format("Invalid time_windows array for {} {}.",
+                                       task_type,
+                                       o["id"].GetUint64()));
     }
 
     std::transform(o["time_windows"].Begin(),
@@ -203,7 +236,7 @@ inline Break get_break(const rapidjson::Value& b, unsigned amount_size) {
                           : std::optional<Amount>();
 
   return Break(b["id"].GetUint64(),
-               get_time_windows(b),
+               get_time_windows(b, "break"),
                get_duration(b, "service"),
                get_string(b, "description"),
                max_load);
@@ -236,6 +269,7 @@ inline VehicleCosts get_vehicle_costs(const rapidjson::Value& v) {
   UserCost fixed = 0;
   UserCost per_hour = DEFAULT_COST_PER_HOUR;
   UserCost per_km = DEFAULT_COST_PER_KM;
+  UserCost per_task_hour = DEFAULT_COST_PER_TASK_HOUR;
 
   if (v.HasMember("costs")) {
     if (!v["costs"].IsObject()) {
@@ -270,9 +304,19 @@ inline VehicleCosts get_vehicle_costs(const rapidjson::Value& v) {
 
       per_km = v["costs"]["per_km"].GetUint();
     }
+
+    if (v["costs"].HasMember("per_task_hour")) {
+      if (!v["costs"]["per_task_hour"].IsUint()) {
+        throw InputException(
+          std::format("Invalid per_task_hour cost for vehicle {}.",
+                      v["id"].GetUint64()));
+      }
+
+      per_task_hour = v["costs"]["per_task_hour"].GetUint();
+    }
   }
 
-  return VehicleCosts(fixed, per_hour, per_km);
+  return VehicleCosts(fixed, per_hour, per_km, per_task_hour);
 }
 
 inline std::vector<VehicleStep> get_vehicle_steps(const rapidjson::Value& v) {
@@ -365,8 +409,8 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
 
   // Check what info are available for vehicle start, then build
   // optional start location.
-  bool has_start_coords = json_vehicle.HasMember("start");
-  bool has_start_index = json_vehicle.HasMember("start_index");
+  const bool has_start_coords = json_vehicle.HasMember("start");
+  const bool has_start_index = json_vehicle.HasMember("start_index");
   if (has_start_index && !json_vehicle["start_index"].IsUint()) {
     throw InputException(
       std::format("Invalid start_index for vehicle {}.", v_id));
@@ -375,7 +419,7 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
   std::optional<Location> start;
   if (has_start_index) {
     // Custom provided matrices and index.
-    Index start_index = json_vehicle["start_index"].GetUint();
+    const Index start_index = json_vehicle["start_index"].GetUint();
     if (has_start_coords) {
       start = Location({start_index, parse_coordinates(json_vehicle, "start")});
     } else {
@@ -389,8 +433,8 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
 
   // Check what info are available for vehicle end, then build
   // optional end location.
-  bool has_end_coords = json_vehicle.HasMember("end");
-  bool has_end_index = json_vehicle.HasMember("end_index");
+  const bool has_end_coords = json_vehicle.HasMember("end");
+  const bool has_end_index = json_vehicle.HasMember("end_index");
   if (has_end_index && !json_vehicle["end_index"].IsUint()) {
     throw InputException(
       std::format("Invalid end_index for vehicle {}.", v_id));
@@ -399,7 +443,7 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
   std::optional<Location> end;
   if (has_end_index) {
     // Custom provided matrices and index.
-    Index end_index = json_vehicle["end_index"].GetUint();
+    const Index end_index = json_vehicle["end_index"].GetUint();
     if (has_end_coords) {
       end = Location({end_index, parse_coordinates(json_vehicle, "end")});
     } else {
@@ -430,29 +474,30 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
                  get_value_for<size_t>(json_vehicle, "max_tasks"),
                  get_value_for<UserDuration>(json_vehicle, "max_travel_time"),
                  get_value_for<UserDistance>(json_vehicle, "max_distance"),
-                 get_vehicle_steps(json_vehicle));
+                 get_vehicle_steps(json_vehicle),
+                 get_string(json_vehicle, "type"));
 }
 
 inline Location get_task_location(const rapidjson::Value& v,
-                                  const std::string& type) {
+                                  const std::string& task_type) {
   // Check what info are available to build task location.
-  bool has_location_coords = v.HasMember("location");
-  bool has_location_index = v.HasMember("location_index");
+  const bool has_location_coords = v.HasMember("location");
+  const bool has_location_index = v.HasMember("location_index");
   if (has_location_index && !v["location_index"].IsUint()) {
     throw InputException(std::format("Invalid location_index for {} {}.",
-                                     type,
+                                     task_type,
                                      v["id"].GetUint64()));
   }
 
   if (has_location_index) {
     // Custom provided matrices and index.
-    Index location_index = v["location_index"].GetUint();
+    const Index location_index = v["location_index"].GetUint();
     if (has_location_coords) {
       return Location({location_index, parse_coordinates(v, "location")});
     }
     return Location(location_index);
   }
-  check_location(v, type);
+  check_location(v, task_type);
   return Location(parse_coordinates(v, "location"));
 }
 
@@ -462,9 +507,9 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
   // Only for retro-compatibility: when no pickup and delivery keys
   // are defined and (deprecated) amount key is present, it should be
   // interpreted as a delivery.
-  bool need_amount_compat = json_job.HasMember("amount") &&
-                            !json_job.HasMember("delivery") &&
-                            !json_job.HasMember("pickup");
+  const bool need_amount_compat = json_job.HasMember("amount") &&
+                                  !json_job.HasMember("delivery") &&
+                                  !json_job.HasMember("pickup");
 
   return Job(json_job["id"].GetUint64(),
              get_task_location(json_job, "job"),
@@ -475,8 +520,10 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_amount(json_job, "pickup", amount_size),
              get_skills(json_job),
              get_priority(json_job),
-             get_time_windows(json_job),
-             get_string(json_job, "description"));
+             get_time_windows(json_job, "job"),
+             get_string(json_job, "description"),
+             get_duration_per_type(json_job, "setup_per_type", "job"),
+             get_duration_per_type(json_job, "service_per_type", "job"));
 }
 
 template <class T> inline Matrix<T> get_matrix(rapidjson::Value& m) {
@@ -484,14 +531,14 @@ template <class T> inline Matrix<T> get_matrix(rapidjson::Value& m) {
     throw InputException("Invalid matrix.");
   }
   // Load custom matrix while checking if it is square.
-  rapidjson::SizeType matrix_size = m.Size();
+  const rapidjson::SizeType matrix_size = m.Size();
 
   Matrix<T> matrix(matrix_size);
   for (rapidjson::SizeType i = 0; i < matrix_size; ++i) {
     if (!m[i].IsArray() || m[i].Size() != matrix_size) {
       throw InputException("Unexpected matrix line length.");
     }
-    rapidjson::Document::Array mi = m[i].GetArray();
+    const rapidjson::Document::Array mi = m[i].GetArray();
     for (rapidjson::SizeType j = 0; j < matrix_size; ++j) {
       if (!mi[j].IsUint()) {
         throw InputException("Invalid matrix entry.");
@@ -509,7 +556,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
 
   // Parsing input string to populate the input object.
   if (json_input.Parse(input_str.c_str()).HasParseError()) {
-    std::string error_msg =
+    const std::string error_msg =
       std::format("{} (offset: {})",
                   rapidjson::GetParseError_En(json_input.GetParseError()),
                   json_input.GetErrorOffset());
@@ -532,9 +579,9 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
 
   const auto& first_vehicle = json_input["vehicles"][0];
   check_id(first_vehicle, "vehicle");
-  bool first_vehicle_has_capacity = (first_vehicle.HasMember("capacity") &&
-                                     first_vehicle["capacity"].IsArray() &&
-                                     first_vehicle["capacity"].Size() > 0);
+  const bool first_vehicle_has_capacity =
+    (first_vehicle.HasMember("capacity") &&
+     first_vehicle["capacity"].IsArray() && !first_vehicle["capacity"].Empty());
   const unsigned amount_size =
     first_vehicle_has_capacity ? first_vehicle["capacity"].Size() : 0;
 
@@ -575,31 +622,43 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
       auto& json_pickup = json_shipment["pickup"];
       check_id(json_pickup, "pickup");
 
-      Job pickup(json_pickup["id"].GetUint64(),
-                 JOB_TYPE::PICKUP,
-                 get_task_location(json_pickup, "pickup"),
-                 get_duration(json_pickup, "setup"),
-                 get_duration(json_pickup, "service"),
-                 amount,
-                 skills,
-                 priority,
-                 get_time_windows(json_pickup),
-                 get_string(json_pickup, "description"));
+      const Job pickup(json_pickup["id"].GetUint64(),
+                       JOB_TYPE::PICKUP,
+                       get_task_location(json_pickup, "pickup"),
+                       get_duration(json_pickup, "setup"),
+                       get_duration(json_pickup, "service"),
+                       amount,
+                       skills,
+                       priority,
+                       get_time_windows(json_pickup, "pickup"),
+                       get_string(json_pickup, "description"),
+                       get_duration_per_type(json_pickup,
+                                             "setup_per_type",
+                                             "pickup"),
+                       get_duration_per_type(json_pickup,
+                                             "service_per_type",
+                                             "pickup"));
 
       // Defining delivery job.
       auto& json_delivery = json_shipment["delivery"];
       check_id(json_delivery, "delivery");
 
-      Job delivery(json_delivery["id"].GetUint64(),
-                   JOB_TYPE::DELIVERY,
-                   get_task_location(json_delivery, "delivery"),
-                   get_duration(json_delivery, "setup"),
-                   get_duration(json_delivery, "service"),
-                   amount,
-                   skills,
-                   priority,
-                   get_time_windows(json_delivery),
-                   get_string(json_delivery, "description"));
+      const Job delivery(json_delivery["id"].GetUint64(),
+                         JOB_TYPE::DELIVERY,
+                         get_task_location(json_delivery, "delivery"),
+                         get_duration(json_delivery, "setup"),
+                         get_duration(json_delivery, "service"),
+                         amount,
+                         skills,
+                         priority,
+                         get_time_windows(json_delivery, "delivery"),
+                         get_string(json_delivery, "description"),
+                         get_duration_per_type(json_delivery,
+                                               "setup_per_type",
+                                               "delivery"),
+                         get_duration_per_type(json_delivery,
+                                               "service_per_type",
+                                               "delivery"));
 
       input.add_shipment(pickup, delivery);
     }

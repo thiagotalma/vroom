@@ -2,13 +2,12 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include "problems/cvrp/cvrp.h"
-#include "algorithms/heuristics/heuristics.h"
 #include "algorithms/local_search/local_search.h"
 #include "problems/cvrp/operators/cross_exchange.h"
 #include "problems/cvrp/operators/intra_cross_exchange.h"
@@ -143,11 +142,10 @@ const std::vector<HeuristicParameters> CVRP::heterogeneous_parameters =
 CVRP::CVRP(const Input& input) : VRP(input) {
 }
 
-Solution CVRP::solve(unsigned nb_searches,
-                     unsigned depth,
-                     unsigned nb_threads,
-                     const Timeout& timeout,
-                     const std::vector<HeuristicParameters>& h_param) const {
+Solution CVRP::solve(const unsigned nb_searches,
+                     const unsigned depth,
+                     const unsigned nb_threads,
+                     const Timeout& timeout) const {
   if (_input.vehicles.size() == 1 && !_input.has_skills() &&
       _input.zero_amount().empty() && !_input.has_shipments() &&
       (_input.jobs.size() <= _input.vehicles[0].max_tasks) &&
@@ -157,7 +155,7 @@ Solution CVRP::solve(unsigned nb_searches,
     std::vector<Index> job_ranks(_input.jobs.size());
     std::iota(job_ranks.begin(), job_ranks.end(), 0);
 
-    TSP p(_input, std::move(job_ranks), 0);
+    const TSP p(_input, std::move(job_ranks), 0);
 
     RawRoute r(_input, 0, 0);
     r.set_route(_input, p.raw_solve(nb_threads, timeout));
@@ -169,7 +167,6 @@ Solution CVRP::solve(unsigned nb_searches,
                                                  depth,
                                                  nb_threads,
                                                  timeout,
-                                                 h_param,
                                                  homogeneous_parameters,
                                                  heterogeneous_parameters);
 }

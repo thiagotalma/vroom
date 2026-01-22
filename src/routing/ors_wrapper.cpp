@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -18,8 +18,7 @@ OrsWrapper::OrsWrapper(const std::string& profile, const Server& server)
                 "durations",
                 "distances",
                 "directions",
-                "\"geometry_simplify\":\"false\",\"continue_straight\":"
-                "\"false\"") {
+                R"("geometry_simplify":"false","continue_straight":"false")") {
 }
 
 std::string OrsWrapper::build_query(const std::vector<Location>& locations,
@@ -41,7 +40,7 @@ std::string OrsWrapper::build_query(const std::vector<Location>& locations,
     body += "," + _routing_args;
   } else {
     assert(service == _matrix_service);
-    body += ",\"metrics\":[\"duration\",\"distance\"]";
+    body += R"(,"metrics":["duration","distance"])";
   }
   body += "}";
 

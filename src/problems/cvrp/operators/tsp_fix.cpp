@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -32,7 +32,7 @@ TSPFix::TSPFix(const Input& input,
 
 void TSPFix::compute_gain() {
   std::vector<Index> jobs = s_route;
-  TSP tsp(_input, std::move(jobs), s_vehicle);
+  const TSP tsp(_input, std::move(jobs), s_vehicle);
   tsp_route = tsp.raw_solve(1, Timeout());
 
   s_gain = _sol_state.route_evals[s_vehicle] -
@@ -45,7 +45,7 @@ bool TSPFix::is_valid() {
   bool valid = is_valid_for_source_range_bounds();
 
   if (valid) {
-    RawRoute route(_input, s_vehicle, _input.zero_amount().size());
+    const RawRoute route(_input, s_vehicle, _input.zero_amount().size());
 
     valid = route.is_valid_addition_for_capacity_inclusion(_input,
                                                            _s_delivery,

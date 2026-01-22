@@ -4,24 +4,38 @@
 
 ### Added
 
+#### Features
+
+- Ability to set different task times per vehicle type (#336)
+- Task times can be included in the cost used internally for optimization (#1130)
+- Support for cost per hour spent on tasks on a vehicle basis (#1130)
+
 #### Internals
 
 - Apply heuristics to partial solutions provided in input (#977)
-- LOG_LS flag to generate debug info on the internal solving process (#1124)
 
 ### Changed
 
 #### Internals
 
 - Bypass matrix request in `plan` mode (#444)
+- Heuristics speed-up (#1219)
+- Account for heuristic time in timeout (#1196)
 - Refactor heuristics to reduce code duplication (#1181)
 - Refactor `Matrix` template class (#1089)
 - Refactor to use `std::format` whenever possible (#1081)
-- Reduce complexity for recreation process (#1155)
 - Refactor `SolutionIndicators` (#1169)
 - Remove amount consistency checks in `parse` in favor of upstream checks in `Input` (#1086)
 - Reduce code duplication in routing wrappers (#1184)
 - Allow passing `path` in `Server` ctor (#1192)
+- Refactor to simplify `VRP::solve` (#1196)
+- Remove heuristic synchronisation (#1188)
+- Refactor gain evaluation in operators to ease code maintenance and extension (#1266)
+- Remove `LOG_LS_OPERATORS` (#1263)
+- Update README to clarify high-level purpose and usage of the project (#1264)
+- Remove unused `breaks_travel_margin` members from TWRoute and associated code (#1295)
+- Run routing requests in parallel (#1218)
+- Refactor parallel solving (#1305)
 
 #### CI
 
@@ -29,22 +43,37 @@
 - Speed up OSRM build (#1096)
 - Update Ubuntu image to 24.04 (#1080)
 - `vroom` workflow uses g++-14 and clang++-18 (#1080)
-- `vroom + libosrm` workflow uses g++-13 and clang++-17 (#1080)
+- `vroom + libosrm` workflow uses g++-14 and clang++-18 (#1234)
 - Update clang-format to 18 (#1148)
+
+#### Dependency
+
+- Update `LibosrmWrapper` to breaking change introduced in OSRM v6 (#1234)
+- Update `asio` usage for deprecated `io_service` and `query` (#1279)
 
 ### Fixed
 
 #### Core solving
 
 - Solution quality regression when using lots of skills (#1193)
+- Invalid route reached by `PriorityReplace` (#1162)
+- Unassigned job with empty compatible vehicle (#1258)
+- Account for gain and assigned tasks to pick priority-improving moves (#1212)
 - Crash due to wrong delivery values in some validity checks (#1164)
 - Crash when input is valid JSON but not an object (#1172)
 - Capacity array check consistency (#1086)
 - Segfault when using the C++ API with empty vehicles (#1187)
+- Solution "shadowing" when only comparing indicators (#1199)
+- Too loose `max_tasks` bound derived from TW (#1243)
+- Wrong evaluation in `ReverseTwoOpt` (#1271)
+- Misleading error with custom distance matrix (#1281)
+- Wrong distance-based optimization with only custom durations (#1298)
+- Break positioning heuristic shortcoming (#1251)
 
 #### Internals
 
 - Iterator type required by `TWRoute::replace` function (#1103)
+- Address some of the SonaQube and clang-tidy reports (#1200)
 
 #### CI
 

@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -23,26 +23,25 @@ using Servers =
 
 struct CLArgs {
   // Listing command-line options.
-  Servers servers;                           // -a and -p
-  bool check;                                // -c
-  std::vector<HeuristicParameters> h_params; // -e
-  bool apply_TSPFix;                         // -f
-  bool geometry;                             // -g
-  std::string input_file;                    // -i
-  Timeout timeout;                           // -l
-  std::string output_file;                   // -o
-  ROUTER router;                             // -r
-  std::string input;                         // cl arg
-  unsigned nb_threads;                       // -t
-  unsigned nb_searches;                      // derived from -x
-  unsigned depth;                            // derived from -x
+  Servers servers;         // -a and -p
+  bool check;              // -c
+  bool apply_TSPFix;       // -f
+  bool geometry;           // -g
+  std::string input_file;  // -i
+  Timeout timeout;         // -l
+  std::string output_file; // -o
+  ROUTER router;           // -r
+  std::string input;       // cl arg
+  unsigned nb_threads;     // -t
+  unsigned nb_searches;    // derived from -x
+  unsigned depth;          // derived from -x
+
+  void set_exploration_level(unsigned exploration_level);
 };
 
 void update_host(Servers& servers, std::string_view value);
 
 void update_port(Servers& servers, std::string_view value);
-
-void set_exploration_level(CLArgs& cl_args, unsigned exploration_level);
 
 } // namespace vroom::io
 

@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -16,20 +16,16 @@ namespace vroom {
 
 class CVRP : public VRP {
 private:
-  bool empty_cluster(const std::vector<Index>& cluster, Index v) const;
-
   static const std::vector<HeuristicParameters> homogeneous_parameters;
   static const std::vector<HeuristicParameters> heterogeneous_parameters;
 
 public:
   explicit CVRP(const Input& input);
 
-  Solution
-  solve(unsigned nb_searches,
-        unsigned depth,
-        unsigned nb_threads,
-        const Timeout& timeout,
-        const std::vector<HeuristicParameters>& h_param) const override;
+  Solution solve(unsigned nb_searches,
+                 unsigned depth,
+                 unsigned nb_threads,
+                 const Timeout& timeout) const override;
 };
 
 } // namespace vroom

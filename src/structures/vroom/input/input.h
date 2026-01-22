@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -38,7 +38,9 @@ private:
   TimePoint _end_loading;
   TimePoint _end_solving;
   TimePoint _end_routing;
-  std::unordered_set<std::string> _profiles;
+  std::unordered_set<std::string, StringHash, std::equal_to<>> _profiles;
+  std::unordered_set<std::string, StringHash, std::equal_to<>>
+    _profiles_requiring_distances;
   std::vector<std::unique_ptr<routing::Wrapper>> _routing_wrappers;
   bool _apply_TSPFix;
   bool _no_addition_yet{true};
@@ -79,6 +81,12 @@ private:
   bool _all_locations_have_coords{true};
   std::vector<std::vector<Eval>> _jobs_vehicles_evals;
 
+  // Default vehicle type is NO_TYPE, related to the fact that we do
+  // not allow empty types as keys for jobs.
+  std::vector<std::string> _vehicle_types{NO_TYPE};
+  std::unordered_map<std::string, Index, StringHash, std::equal_to<>>
+    _type_to_rank_in_vehicle_types{{NO_TYPE, 0}};
+
   // Used in plan mode since we store route geometries while
   // generating sparse matrices.
   std::vector<std::string> _vehicles_geometry;
@@ -104,6 +112,7 @@ private:
   void set_vehicles_costs();
   void set_vehicles_max_tasks();
   void set_jobs_vehicles_evals();
+  void set_jobs_durations_per_vehicle_type();
   void set_vehicle_steps_ranks();
   void init_missing_matrices(const std::string& profile);
 
@@ -122,6 +131,9 @@ public:
   std::unordered_map<Id, Index> job_id_to_rank;
   std::unordered_map<Id, Index> pickup_id_to_rank;
   std::unordered_map<Id, Index> delivery_id_to_rank;
+
+  // Store list of compatible vehicles for each job.
+  std::vector<std::vector<Index>> compatible_vehicles_for_job;
 
   Input(io::Servers servers = {},
         ROUTER router = ROUTER::OSRM,
@@ -196,9 +208,13 @@ public:
   Solution solve(unsigned nb_searches,
                  unsigned depth,
                  unsigned nb_thread,
-                 const Timeout& timeout = Timeout(),
-                 const std::vector<HeuristicParameters>& h_param =
-                   std::vector<HeuristicParameters>());
+                 const Timeout& timeout = Timeout());
+
+  // Overload designed to expose the same interface as the `-x`
+  // command-line flag for out-of-the-box setup of exploration level.
+  Solution solve(unsigned exploration_level,
+                 unsigned nb_thread,
+                 const Timeout& timeout = Timeout());
 
   Solution check(unsigned nb_thread);
 };

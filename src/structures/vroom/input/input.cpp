@@ -2,13 +2,14 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include <algorithm>
 #include <mutex>
+#include <semaphore>
 #include <thread>
 
 #if USE_LIBOSRM
@@ -121,7 +122,7 @@ void Input::check_job(Job& job) {
   check_amount_size(job.pickup);
 
   // Ensure that location index are either always or never provided.
-  bool has_location_index = job.location.user_index();
+  const bool has_location_index = job.location.user_index();
   if (_no_addition_yet) {
     _no_addition_yet = false;
     _has_custom_location_index = has_location_index;
@@ -382,12 +383,30 @@ void Input::add_vehicle(const Vehicle& vehicle) {
   }
 
   _profiles.insert(current_v.profile);
+  if (current_v.costs.per_km != 0) {
+    _profiles_requiring_distances.insert(current_v.profile);
+  }
 
-  auto search = _max_cost_per_hour.find(current_v.profile);
-  if (search == _max_cost_per_hour.end()) {
+  if (auto search = _max_cost_per_hour.find(current_v.profile);
+      search == _max_cost_per_hour.end()) {
     _max_cost_per_hour.try_emplace(current_v.profile, current_v.costs.per_hour);
   } else {
     search->second = std::max(search->second, current_v.costs.per_hour);
+  }
+
+  // Store vehicle type stuff.
+  const auto& type = current_v.type_str;
+  if (auto search = _type_to_rank_in_vehicle_types.find(type);
+      search != _type_to_rank_in_vehicle_types.end()) {
+    // Already known type, only set vehicle type with known index.
+    current_v.type = search->second;
+  } else {
+    const Index rank = _vehicle_types.size();
+    [[maybe_unused]] const auto [it, insertion_ok] =
+      _type_to_rank_in_vehicle_types.try_emplace(type, rank);
+    assert(insertion_ok);
+    _vehicle_types.push_back(type);
+    current_v.type = rank;
   }
 }
 
@@ -479,7 +498,8 @@ UserCost Input::check_cost_bound(const Matrix<UserCost>& matrix) const {
                                   max_cost_per_column[j.index()]);
   }
 
-  UserCost jobs_bound = std::max(jobs_departure_bound, jobs_arrival_bound);
+  const UserCost jobs_bound =
+    std::max(jobs_departure_bound, jobs_arrival_bound);
 
   UserCost start_bound = 0;
   UserCost end_bound = 0;
@@ -496,7 +516,7 @@ UserCost Input::check_cost_bound(const Matrix<UserCost>& matrix) const {
     }
   }
 
-  UserCost bound = utils::add_without_overflow(start_bound, jobs_bound);
+  const UserCost bound = utils::add_without_overflow(start_bound, jobs_bound);
   return utils::add_without_overflow(bound, end_bound);
 }
 
@@ -528,44 +548,50 @@ void Input::set_extra_compatibility() {
   // amount that does not fit into vehicle or that cannot be added to
   // an empty route for vehicle based on the timing constraints (when
   // they apply).
+  compatible_vehicles_for_job = std::vector<std::vector<Index>>(jobs.size());
+
   for (std::size_t v = 0; v < vehicles.size(); ++v) {
-    TWRoute empty_route(*this, v, _zero.size());
+    const TWRoute empty_route(*this, v, _zero.size());
     for (Index j = 0; j < jobs.size(); ++j) {
-      if (_vehicle_to_job_compatibility[v][j]) {
-        bool is_compatible =
-          empty_route.is_valid_addition_for_capacity(*this,
-                                                     jobs[j].pickup,
-                                                     jobs[j].delivery,
-                                                     0);
+      if (!_vehicle_to_job_compatibility[v][j]) {
+        continue;
+      }
 
-        bool is_shipment_pickup = (jobs[j].type == JOB_TYPE::PICKUP);
+      bool is_compatible =
+        empty_route.is_valid_addition_for_capacity(*this,
+                                                   jobs[j].pickup,
+                                                   jobs[j].delivery,
+                                                   0);
 
-        if (is_compatible && _has_TW) {
-          if (jobs[j].type == JOB_TYPE::SINGLE) {
-            is_compatible =
-              is_compatible &&
-              empty_route.is_valid_addition_for_tw_without_max_load(*this,
-                                                                    j,
-                                                                    0);
-          } else {
-            assert(is_shipment_pickup);
-            std::vector<Index> p_d({j, static_cast<Index>(j + 1)});
-            is_compatible =
-              is_compatible && empty_route.is_valid_addition_for_tw(*this,
-                                                                    _zero,
-                                                                    p_d.begin(),
-                                                                    p_d.end(),
-                                                                    0,
-                                                                    0);
-          }
+      const bool is_shipment_pickup = (jobs[j].type == JOB_TYPE::PICKUP);
+
+      if (is_compatible && _has_TW) {
+        if (jobs[j].type == JOB_TYPE::SINGLE) {
+          is_compatible =
+            is_compatible &&
+            empty_route.is_valid_addition_for_tw_without_max_load(*this, j, 0);
+        } else {
+          assert(is_shipment_pickup);
+          std::vector<Index> p_d({j, static_cast<Index>(j + 1)});
+          is_compatible =
+            is_compatible && empty_route.is_valid_addition_for_tw(*this,
+                                                                  _zero,
+                                                                  p_d.begin(),
+                                                                  p_d.end(),
+                                                                  0,
+                                                                  0);
         }
+      }
 
-        _vehicle_to_job_compatibility[v][j] = is_compatible;
-        if (is_shipment_pickup) {
-          // Skipping matching delivery which is next in line in jobs.
-          _vehicle_to_job_compatibility[v][j + 1] = is_compatible;
-          ++j;
-        }
+      _vehicle_to_job_compatibility[v][j] = is_compatible;
+      if (is_shipment_pickup) {
+        // Skipping matching delivery which is next in line in jobs.
+        _vehicle_to_job_compatibility[v][j + 1] = is_compatible;
+        ++j;
+      }
+
+      if (is_compatible) {
+        compatible_vehicles_for_job[j].push_back(v);
       }
     }
   }
@@ -697,20 +723,23 @@ void Input::set_vehicles_max_tasks() {
     struct JobTime {
       Index rank;
       Duration action;
-
-      bool operator<(const JobTime& rhs) const {
-        return this->action < rhs.action;
-      }
     };
 
-    std::vector<JobTime> job_times(jobs.size());
-    for (Index j = 0; j < jobs.size(); ++j) {
-      const auto action =
-        jobs[j].service +
-        (is_used_several_times(jobs[j].location) ? 0 : jobs[j].setup);
-      job_times[j] = {j, action};
+    // Store jobs ordered by increasing action time per vehicle type.
+    std::vector<std::vector<JobTime>> job_times_per_type(_vehicle_types.size(),
+                                                         std::vector<JobTime>(
+                                                           jobs.size()));
+    for (Index t = 0; t < _vehicle_types.size(); ++t) {
+      for (Index j = 0; j < jobs.size(); ++j) {
+        const auto action =
+          jobs[j].services[t] +
+          (is_used_several_times(jobs[j].location) ? 0 : jobs[j].setups[t]);
+        job_times_per_type[t][j] = {j, action};
+      }
+      std::ranges::sort(job_times_per_type[t],
+                        std::ranges::less{},
+                        &JobTime::action);
     }
-    std::sort(job_times.begin(), job_times.end());
 
     for (Index v = 0; v < vehicles.size(); ++v) {
       auto& vehicle = vehicles[v];
@@ -721,16 +750,19 @@ void Input::set_vehicles_max_tasks() {
       }
 
       const auto vehicle_duration = vehicle.available_duration();
+      const auto t = vehicle.type;
       std::size_t doable_tasks = 0;
       Duration time_sum = 0;
 
       for (std::size_t j = 0; j < jobs.size(); ++j) {
-        if (time_sum > vehicle_duration) {
-          break;
-        }
-        if (vehicle_ok_with_job(v, job_times[j].rank)) {
-          ++doable_tasks;
-          time_sum += job_times[j].action;
+        if (vehicle_ok_with_job(v, job_times_per_type[t][j].rank)) {
+          time_sum += job_times_per_type[t][j].action;
+
+          if (time_sum <= vehicle_duration) {
+            ++doable_tasks;
+          } else {
+            break;
+          }
         }
       }
 
@@ -750,8 +782,9 @@ void Input::set_jobs_vehicles_evals() {
                                                      Eval(_cost_upper_bound)));
 
   for (std::size_t j = 0; j < jobs.size(); ++j) {
-    Index j_index = jobs[j].index();
-    bool is_pickup = (jobs[j].type == JOB_TYPE::PICKUP);
+    const auto& job = jobs[j];
+    const Index j_index = job.index();
+    const bool is_pickup = (job.type == JOB_TYPE::PICKUP);
 
     Index last_job_index = j_index;
     if (is_pickup) {
@@ -768,14 +801,30 @@ void Input::set_jobs_vehicles_evals() {
 
       auto& current_eval = _jobs_vehicles_evals[j][v];
 
+      Duration added_task_duration = job.services[vehicle.type];
+
       current_eval = is_pickup ? vehicle.eval(j_index, last_job_index) : Eval();
       if (vehicle.has_start()) {
-        current_eval += vehicle.eval(vehicle.start.value().index(), j_index);
+        const auto start_index = vehicle.start.value().index();
+        current_eval += vehicle.eval(start_index, j_index);
+
+        if (start_index != j_index) {
+          added_task_duration += job.setups[vehicle.type];
+        }
       }
       if (vehicle.has_end()) {
         current_eval +=
           vehicle.eval(last_job_index, vehicle.end.value().index());
       }
+
+      if (is_pickup) {
+        const auto& d_job = jobs[j + 1];
+        added_task_duration += d_job.services[vehicle.type];
+        if (j_index != d_job.index()) {
+          added_task_duration += d_job.setups[vehicle.type];
+        }
+      }
+      current_eval += vehicle.task_eval(added_task_duration);
 
       if (is_pickup) {
         // Assign same eval to delivery.
@@ -786,6 +835,32 @@ void Input::set_jobs_vehicles_evals() {
     if (is_pickup) {
       // Skip delivery.
       ++j;
+    }
+  }
+}
+
+void Input::set_jobs_durations_per_vehicle_type() {
+  const auto nb_types = _vehicle_types.size();
+
+  for (auto& job : jobs) {
+    // Populate duration vectors with default values at first.
+    job.setups = std::vector<Duration>(nb_types, job.default_setup);
+    job.services = std::vector<Duration>(nb_types, job.default_service);
+
+    // Iterate on all user-defined vehicle types to override relevant
+    // setup and service values.
+    for (std::size_t type_rank = 1; type_rank < nb_types; ++type_rank) {
+      const auto& type = _vehicle_types[type_rank];
+
+      if (const auto search = job.setup_per_type.find(type);
+          search != job.setup_per_type.end()) {
+        job.setups[type_rank] = search->second;
+      }
+
+      if (const auto search = job.service_per_type.find(type);
+          search != job.service_per_type.end()) {
+        job.services[type_rank] = search->second;
+      }
     }
   }
 }
@@ -903,9 +978,11 @@ void Input::init_missing_matrices(const std::string& profile) {
     // Custom durations matrix defined.
     if (!_distances_matrices.contains(profile)) {
       // No custom distances.
-      if (_geometry) {
-        // Get distances from routing engine later on since routing
-        // is explicitly requested.
+      if (_geometry || _profiles_requiring_distances.contains(profile)) {
+        // Get distances from routing engine later on since routing is
+        // explicitly requested, or distances should be used in
+        // optimization objective.
+        create_routing_wrapper = true;
         _distances_matrices.try_emplace(profile);
       } else {
         // Routing-less optimization with no distances involved,
@@ -946,15 +1023,18 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
       !_has_custom_location_index) {
     throw InputException("Missing location index.");
   }
-  if ((_durations_matrices.empty() && _costs_matrices.empty()) &&
+  if ((_durations_matrices.empty() && _distances_matrices.empty() &&
+       _costs_matrices.empty()) &&
       _has_custom_location_index) {
     throw InputException(
       "Unexpected location index while no custom matrices provided.");
   }
 
   // Report distances either if geometry is explicitly requested, or
-  // if distance matrices are manually provided.
-  _report_distances = _geometry || !_distances_matrices.empty();
+  // if distance matrices are manually provided or required in
+  // optimization objective.
+  _report_distances = _geometry || !_distances_matrices.empty() ||
+                      !_profiles_requiring_distances.empty();
 
   if (!_distances_matrices.empty()) {
     // Distances matrices should be either always or never provided.
@@ -1001,7 +1081,7 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
         assert(!define_durations || define_distances);
 
         if (define_durations || define_distances) {
-          if (_locations.size() == 1) {
+          if (_locations.size() == 1 && !sparse_filling) {
             durations_m->second = Matrix<UserDuration>(1);
             distances_m->second = Matrix<UserDistance>(1);
           } else {
@@ -1069,7 +1149,7 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
 
           // Check for potential overflow in solution cost.
           const UserCost current_bound = check_cost_bound(c_m->second);
-          std::scoped_lock<std::mutex> lock(cost_bound_m);
+          const std::scoped_lock<std::mutex> lock(cost_bound_m);
           _cost_upper_bound =
             std::max(_cost_upper_bound,
                      utils::scale_from_user_cost(current_bound));
@@ -1081,7 +1161,7 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
           assert(search != _max_cost_per_hour.end());
           const auto max_cost_per_hour_for_profile = search->second;
 
-          std::scoped_lock<std::mutex> lock(cost_bound_m);
+          const std::scoped_lock<std::mutex> lock(cost_bound_m);
           _cost_upper_bound =
             std::max(_cost_upper_bound,
                      max_cost_per_hour_for_profile *
@@ -1089,7 +1169,7 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
         }
       }
     } catch (...) {
-      std::scoped_lock<std::mutex> lock(ep_m);
+      const std::scoped_lock<std::mutex> lock(ep_m);
       ep = std::current_exception();
     }
   };
@@ -1118,16 +1198,26 @@ std::unique_ptr<VRP> Input::get_problem() const {
   return std::make_unique<CVRP>(*this);
 }
 
-Solution Input::solve(unsigned nb_searches,
-                      unsigned depth,
-                      unsigned nb_thread,
-                      const Timeout& timeout,
-                      const std::vector<HeuristicParameters>& h_param) {
+Solution Input::solve(const unsigned exploration_level,
+                      const unsigned nb_thread,
+                      const Timeout& timeout) {
+  return solve(utils::get_nb_searches(exploration_level),
+               utils::get_depth(exploration_level),
+               nb_thread,
+               timeout);
+}
+
+Solution Input::solve(const unsigned nb_searches,
+                      const unsigned depth,
+                      const unsigned nb_thread,
+                      const Timeout& timeout) {
   run_basic_checks();
 
   if (_has_initial_routes) {
     set_vehicle_steps_ranks();
   }
+
+  set_jobs_durations_per_vehicle_type();
 
   set_matrices(nb_thread);
   set_vehicles_costs();
@@ -1160,8 +1250,7 @@ Solution Input::solve(unsigned nb_searches,
   }
 
   // Solve.
-  auto sol =
-    instance->solve(nb_searches, depth, nb_thread, solve_time, h_param);
+  auto sol = instance->solve(nb_searches, depth, nb_thread, solve_time);
 
   // Update timing info.
   sol.summary.computing_times.loading = loading.count();
@@ -1173,16 +1262,44 @@ Solution Input::solve(unsigned nb_searches,
       .count();
 
   if (_geometry) {
-    for (auto& route : sol.routes) {
-      const auto& profile = route.profile;
-      auto rw = std::ranges::find_if(_routing_wrappers, [&](const auto& wr) {
-        return wr->profile == profile;
-      });
-      if (rw == _routing_wrappers.end()) {
-        throw InputException(
-          "Route geometry request with non-routable profile " + profile + ".");
+    std::vector<std::jthread> threads;
+    threads.reserve(sol.routes.size());
+    std::exception_ptr ep = nullptr;
+    std::mutex ep_m;
+    std::counting_semaphore<MAX_ROUTING_THREADS> semaphore(
+      std::min(MAX_ROUTING_THREADS, nb_thread));
+
+    auto run_routing = [this, &semaphore, &sol, &ep, &ep_m](std::size_t i) {
+      semaphore.acquire();
+      try {
+        auto& route = sol.routes[i];
+        const auto& profile = route.profile;
+        auto rw = std::ranges::find_if(_routing_wrappers, [&](const auto& wr) {
+          return wr->profile == profile;
+        });
+        if (rw == _routing_wrappers.end()) {
+          throw InputException(
+            "Route geometry request with non-routable profile " + profile +
+            ".");
+        }
+        (*rw)->add_geometry(route);
+      } catch (...) {
+        const std::scoped_lock<std::mutex> lock(ep_m);
+        ep = std::current_exception();
       }
-      (*rw)->add_geometry(route);
+      semaphore.release();
+    };
+
+    for (std::size_t i = 0; i < sol.routes.size(); ++i) {
+      threads.emplace_back(run_routing, i);
+    }
+
+    for (auto& t : threads) {
+      t.join();
+    }
+
+    if (ep != nullptr) {
+      std::rethrow_exception(ep);
     }
 
     _end_routing = std::chrono::high_resolution_clock::now();
@@ -1199,6 +1316,8 @@ Solution Input::solve(unsigned nb_searches,
 Solution Input::check(unsigned nb_thread) {
 #if USE_LIBGLPK
   run_basic_checks();
+
+  set_jobs_durations_per_vehicle_type();
 
   set_vehicle_steps_ranks();
 
@@ -1236,6 +1355,7 @@ Solution Input::check(unsigned nb_thread) {
       auto search = route_rank_to_v_rank.find(i);
       assert(search != route_rank_to_v_rank.end());
       const auto v_rank = search->second;
+      assert(v_rank < _vehicles_geometry.size());
       route.geometry = std::move(_vehicles_geometry[v_rank]);
     }
 

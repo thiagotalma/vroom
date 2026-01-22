@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -11,10 +11,6 @@ All rights reserved (see LICENSE).
 #include <chrono>
 #include <numeric>
 #include <sstream>
-
-#ifdef LOG_LS_OPERATORS
-#include <iostream>
-#endif
 
 #include "utils/helpers.h"
 
@@ -32,107 +28,6 @@ Amount max_amount(std::size_t size) {
   return max;
 }
 
-INIT get_init(std::string_view s) {
-  using enum INIT;
-  if (s == "NONE") {
-    return NONE;
-  }
-  if (s == "HIGHER_AMOUNT") {
-    return HIGHER_AMOUNT;
-  }
-  if (s == "NEAREST") {
-    return NEAREST;
-  }
-  if (s == "FURTHEST") {
-    return FURTHEST;
-  }
-  if (s == "EARLIEST_DEADLINE") {
-    return EARLIEST_DEADLINE;
-  }
-  throw InputException("Invalid heuristic parameter in command-line.");
-}
-
-SORT get_sort(std::string_view s) {
-  if (s == "AVAILABILITY") {
-    return SORT::AVAILABILITY;
-  }
-  if (s == "COST") {
-    return SORT::COST;
-  }
-  throw InputException("Invalid heuristic parameter in command-line.");
-}
-
-#ifdef LOG_LS_OPERATORS
-void log_LS_operators(
-  const std::vector<std::array<ls::OperatorStats, OperatorName::MAX>>&
-    ls_stats) {
-  assert(!ls_stats.empty());
-
-  // Sum indicators per operator.
-  std::array<unsigned, OperatorName::MAX> tried_sums;
-  std::array<unsigned, OperatorName::MAX> applied_sums;
-  tried_sums.fill(0);
-  applied_sums.fill(0);
-
-  unsigned total_tried = 0;
-  unsigned total_applied = 0;
-  for (const auto& ls_run : ls_stats) {
-    for (auto op = 0; op < OperatorName::MAX; ++op) {
-      tried_sums[op] += ls_run[op].tried_moves;
-      total_tried += ls_run[op].tried_moves;
-
-      applied_sums[op] += ls_run[op].applied_moves;
-      total_applied += ls_run[op].applied_moves;
-    }
-  }
-
-  for (auto op = 0; op < OperatorName::MAX; ++op) {
-    std::cout << OPERATOR_NAMES[op] << "," << tried_sums[op] << ","
-              << applied_sums[op] << std::endl;
-  }
-  std::cout << "Total," << total_tried << "," << total_applied << std::endl;
-}
-#endif
-
-HeuristicParameters str_to_heuristic_param(const std::string& s) {
-  // Split command-line string describing parameters.
-  constexpr char delimiter = ';';
-  std::vector<std::string> tokens;
-  tokens.reserve(4);
-  std::string token;
-  std::istringstream tokenStream(s);
-  while (std::getline(tokenStream, token, delimiter)) {
-    tokens.push_back(token);
-  }
-
-  if ((tokens.size() != 3 && tokens.size() != 4) || tokens[0].size() != 1) {
-    throw InputException("Invalid heuristic parameter in command-line.");
-  }
-
-  auto init = get_init(tokens[1]);
-  auto sort = (tokens.size() == 3) ? SORT::AVAILABILITY : get_sort(tokens[3]);
-
-  try {
-    auto h = std::stoul(tokens[0]);
-
-    if (h != 0 && h != 1) {
-      throw InputException("Invalid heuristic parameter in command-line.");
-    }
-
-    auto regret_coeff = std::stof(tokens[2]);
-    if (regret_coeff < 0) {
-      throw InputException("Invalid heuristic parameter in command-line.");
-    }
-
-    return HeuristicParameters(static_cast<HEURISTIC>(h),
-                               init,
-                               regret_coeff,
-                               sort);
-  } catch (const std::exception&) {
-    throw InputException("Invalid heuristic parameter in command-line.");
-  }
-}
-
 Priority priority_sum_for_route(const Input& input,
                                 const std::vector<Index>& route) {
   return std::accumulate(route.begin(),
@@ -144,40 +39,48 @@ Priority priority_sum_for_route(const Input& input,
 }
 
 Eval route_eval_for_vehicle(const Input& input,
-                            Index vehicle_rank,
-                            const std::vector<Index>::const_iterator first_job,
-                            const std::vector<Index>::const_iterator last_job) {
-  const auto& v = input.vehicles[vehicle_rank];
+                            Index v_rank,
+                            const std::vector<Index>& route) {
+  const auto& v = input.vehicles[v_rank];
   Eval eval;
 
-  if (first_job != last_job) {
+  if (!route.empty()) {
     eval.cost += v.fixed_cost();
 
+    const auto& first_job = input.jobs[route.front()];
+    auto jobs_task_duration = first_job.services[v.type];
+
     if (v.has_start()) {
-      eval += v.eval(v.start.value().index(), input.jobs[*first_job].index());
+      eval += v.eval(v.start.value().index(), first_job.index());
     }
 
-    Index previous = *first_job;
-    for (auto it = std::next(first_job); it != last_job; ++it) {
-      eval += v.eval(input.jobs[previous].index(), input.jobs[*it].index());
-      previous = *it;
+    if (!v.has_start() || v.start.value().index() != first_job.index()) {
+      jobs_task_duration += first_job.setups[v.type];
+    }
+
+    Index previous_index = input.jobs[route.front()].index();
+    for (Index i = 1; i < route.size(); ++i) {
+      const auto& current_job = input.jobs[route[i]];
+      const auto current_index = current_job.index();
+
+      eval += v.eval(previous_index, current_index);
+
+      jobs_task_duration += current_job.services[v.type];
+      if (current_index != previous_index) {
+        jobs_task_duration += current_job.setups[v.type];
+      }
+
+      previous_index = current_index;
     }
 
     if (v.has_end()) {
-      eval += v.eval(input.jobs[previous].index(), v.end.value().index());
+      eval += v.eval(previous_index, v.end.value().index());
     }
+
+    eval += v.task_eval(jobs_task_duration);
   }
 
   return eval;
-}
-
-Eval route_eval_for_vehicle(const Input& input,
-                            Index vehicle_rank,
-                            const std::vector<Index>& route) {
-  return route_eval_for_vehicle(input,
-                                vehicle_rank,
-                                route.begin(),
-                                route.end());
 }
 
 #ifndef NDEBUG
@@ -206,7 +109,7 @@ void check_tws(const std::vector<TimeWindow>& tws,
                const std::string& type) {
   if (tws.empty()) {
     throw InputException(
-      std::format("Empty time-windows for {} {}.", type, id));
+      std::format("Empty time windows for {} {}.", type, id));
   }
 
   if (tws.size() > 1) {
@@ -227,6 +130,18 @@ void check_priority(const Priority priority,
   if (priority > MAX_PRIORITY) {
     throw InputException(
       std::format("Invalid priority value for {} {}.", type, id));
+  }
+}
+
+void check_no_empty_keys(const TypeToDurationMap& type_to_duration,
+                         const Id id,
+                         const std::string& type,
+                         const std::string& key_name) {
+  if (std::ranges::any_of(type_to_duration, [](const auto& pair) {
+        return pair.first.empty();
+      })) {
+    throw InputException(
+      std::format("Empty type in {} for {} {}.", key_name, type, id));
   }
 }
 
@@ -295,11 +210,12 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
     assert(input.vehicle_ok_with_job(i, route.front()));
 
     const auto first_job_setup =
-      (first_job.index() == previous_location) ? 0 : first_job.setup;
+      (first_job.index() == previous_location) ? 0 : first_job.setups[v.type];
     setup += first_job_setup;
     previous_location = first_job.index();
 
-    service += first_job.service;
+    const auto first_job_service = first_job.services[v.type];
+    service += first_job_service;
     priority += first_job.priority;
 
     current_load += first_job.pickup;
@@ -314,12 +230,13 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 
     steps.emplace_back(first_job,
                        scale_to_user_duration(first_job_setup),
+                       scale_to_user_duration(first_job_service),
                        current_load);
     auto& first = steps.back();
     first.duration = scale_to_user_duration(ETA);
     first.distance = eval_sum.distance;
     first.arrival = scale_to_user_duration(ETA);
-    ETA += (first_job_setup + first_job.service);
+    ETA += (first_job_setup + first_job_service);
     unassigned_ranks.erase(route.front());
 
     for (std::size_t r = 0; r < route.size() - 1; ++r) {
@@ -331,12 +248,14 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 
       const auto& current_job = input.jobs[route[r + 1]];
 
-      const auto current_setup =
-        (current_job.index() == previous_location) ? 0 : current_job.setup;
+      const auto current_setup = (current_job.index() == previous_location)
+                                   ? 0
+                                   : current_job.setups[v.type];
       setup += current_setup;
       previous_location = current_job.index();
 
-      service += current_job.service;
+      const auto current_service = current_job.services[v.type];
+      service += current_service;
       priority += current_job.priority;
 
       current_load += current_job.pickup;
@@ -351,12 +270,13 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 
       steps.emplace_back(current_job,
                          scale_to_user_duration(current_setup),
+                         scale_to_user_duration(current_service),
                          current_load);
       auto& current = steps.back();
       current.duration = scale_to_user_duration(eval_sum.duration);
       current.distance = eval_sum.distance;
       current.arrival = scale_to_user_duration(ETA);
-      ETA += (current_setup + current_job.service);
+      ETA += (current_setup + current_service);
       unassigned_ranks.erase(route[r + 1]);
     }
 
@@ -379,10 +299,13 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 
     assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
     const UserCost user_fixed_cost = scale_to_user_cost(v.fixed_cost());
+    const UserCost user_travel_cost = scale_to_user_cost(eval_sum.cost);
+    const UserCost user_task_cost =
+      scale_to_user_cost(v.task_cost(setup + service));
 
     routes.emplace_back(v.id,
                         std::move(steps),
-                        user_fixed_cost + scale_to_user_cost(eval_sum.cost),
+                        user_fixed_cost + user_travel_cost + user_task_cost,
                         scale_to_user_duration(eval_sum.duration),
                         eval_sum.distance,
                         scale_to_user_duration(setup),
@@ -403,7 +326,7 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 Route format_route(const Input& input,
                    const TWRoute& tw_r,
                    std::unordered_set<Index>& unassigned_ranks) {
-  const auto& v = input.vehicles[tw_r.vehicle_rank];
+  const auto& v = input.vehicles[tw_r.v_rank];
 
   assert(tw_r.size() <= v.max_tasks);
 
@@ -469,14 +392,15 @@ Route format_route(const Input& input,
       }
     }
 
-    bool same_location = (r > 1 && input.jobs[tw_r.route[r - 2]].index() ==
-                                     previous_job.index()) ||
-                         (r == 1 && v.has_start() &&
-                          v.start.value().index() == previous_job.index());
-    const auto current_setup = same_location ? 0 : previous_job.setup;
+    const bool same_location =
+      (r > 1 &&
+       input.jobs[tw_r.route[r - 2]].index() == previous_job.index()) ||
+      (r == 1 && v.has_start() &&
+       v.start.value().index() == previous_job.index());
+    const auto current_setup = same_location ? 0 : previous_job.setups[v.type];
 
-    Duration diff =
-      current_setup + previous_job.service + remaining_travel_time;
+    const Duration diff =
+      current_setup + previous_job.services[v.type] + remaining_travel_time;
 
     assert(diff <= step_start);
     Duration candidate_start = step_start - diff;
@@ -580,7 +504,7 @@ Route format_route(const Input& input,
   Duration travel_time = current_eval.duration;
 
   for (std::size_t r = 0; r < tw_r.route.size(); ++r) {
-    assert(input.vehicle_ok_with_job(tw_r.vehicle_rank, tw_r.route[r]));
+    assert(input.vehicle_ok_with_job(tw_r.v_rank, tw_r.route[r]));
     const auto& current_job = input.jobs[tw_r.route[r]];
     auto user_distance = eval_sum.distance;
 
@@ -621,7 +545,7 @@ Route format_route(const Input& input,
           // The whole remaining travel time is spent before this
           // break, not filling the whole margin.
 
-          Duration wt = margin - travel_time;
+          const Duration wt = margin - travel_time;
           forward_wt += wt;
 
           current_break.arrival =
@@ -674,11 +598,13 @@ Route format_route(const Input& input,
     // Back to current job.
     duration += travel_time;
     eval_sum += current_eval;
-    service += current_job.service;
+    const auto current_service = current_job.services[v.type];
+    service += current_service;
     priority += current_job.priority;
 
-    const auto current_setup =
-      (current_job.index() == previous_location) ? 0 : current_job.setup;
+    const auto current_setup = (current_job.index() == previous_location)
+                                 ? 0
+                                 : current_job.setups[v.type];
     setup += current_setup;
     previous_location = current_job.index();
 
@@ -694,6 +620,7 @@ Route format_route(const Input& input,
 
     steps.emplace_back(current_job,
                        scale_to_user_duration(current_setup),
+                       scale_to_user_duration(current_service),
                        current_load);
     auto& current = steps.back();
 
@@ -710,7 +637,7 @@ Route format_route(const Input& input,
     assert(j_tw != current_job.tws.end());
 
     if (step_start < j_tw->start) {
-      Duration wt = j_tw->start - step_start;
+      const Duration wt = j_tw->start - step_start;
       forward_wt += wt;
 
       // Recompute user-reported waiting time rather than using
@@ -738,7 +665,7 @@ Route format_route(const Input& input,
       (current.waiting_time == 0 || scale_to_user_duration(j_tw->start) ==
                                       current.arrival + current.waiting_time));
 
-    step_start += (current_setup + current_job.service);
+    step_start += (current_setup + current_service);
 
     unassigned_ranks.erase(tw_r.route[r]);
   }
@@ -778,7 +705,7 @@ Route format_route(const Input& input,
         // The whole remaining travel time is spent before this
         // break, not filling the whole margin.
 
-        Duration wt = margin - travel_time;
+        const Duration wt = margin - travel_time;
         forward_wt += wt;
 
         current_break.arrival =
@@ -859,15 +786,17 @@ Route format_route(const Input& input,
 
   assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
   const UserCost user_fixed_cost = utils::scale_to_user_cost(v.fixed_cost());
-  const UserCost user_cost =
+  const UserCost user_travel_cost =
     v.cost_based_on_metrics()
       ? v.cost_wrapper.user_cost_from_user_metrics(user_duration,
                                                    eval_sum.distance)
       : utils::scale_to_user_cost(eval_sum.cost);
+  const UserCost user_task_cost =
+    scale_to_user_cost(v.task_cost(setup + service));
 
   return Route(v.id,
                std::move(steps),
-               user_fixed_cost + user_cost,
+               user_fixed_cost + user_travel_cost + user_task_cost,
                user_duration,
                eval_sum.distance,
                scale_to_user_duration(setup),

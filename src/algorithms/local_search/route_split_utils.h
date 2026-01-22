@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -72,44 +72,40 @@ compute_best_route_split_choice(const Input& input,
         continue;
       }
 
-      Eval current_end_eval(end_v.fixed_cost());
-      current_end_eval += sol_state.fwd_costs[s_vehicle][v].back() -
-                          sol_state.fwd_costs[s_vehicle][v][r];
-      if (end_v.has_start()) {
-        current_end_eval += end_v.eval(end_v.start.value().index(),
-                                       input.jobs[source.route[r]].index());
-      }
-      if (end_v.has_end()) {
-        current_end_eval += end_v.eval(input.jobs[source.route.back()].index(),
-                                       end_v.end.value().index());
-      }
+      const auto current_end_eval =
+        -std::get<0>(utils::addition_eval_delta(input,
+                                                sol_state,
+                                                empty_routes[v_rank],
+                                                0,
+                                                0,
+                                                source,
+                                                r,
+                                                source.size()));
 
       if (!end_v.ok_for_range_bounds(current_end_eval)) {
         continue;
       }
 
-      if (current_end_eval < second_best_end_eval) {
-        // Worth checking end route full validity.
+      if (current_end_eval < second_best_end_eval &&
+          // Worth checking end route full validity.
+          empty_routes[v_rank].is_valid_addition_for_tw(input,
+                                                        end_delivery,
+                                                        source.route.begin() +
+                                                          r,
+                                                        source.route.end(),
+                                                        0,
+                                                        0)) {
+        if (current_end_eval < first_best_end_eval) {
+          // We have a new first choice.
+          second_v_end = first_v_end;
+          second_best_end_eval = first_best_end_eval;
 
-        if (empty_routes[v_rank].is_valid_addition_for_tw(input,
-                                                          end_delivery,
-                                                          source.route.begin() +
-                                                            r,
-                                                          source.route.end(),
-                                                          0,
-                                                          0)) {
-          if (current_end_eval < first_best_end_eval) {
-            // We have a new first choice.
-            second_v_end = first_v_end;
-            second_best_end_eval = first_best_end_eval;
-
-            first_v_end = v_rank;
-            first_best_end_eval = current_end_eval;
-          } else {
-            // We have a new second choice.
-            second_v_end = v_rank;
-            second_best_end_eval = current_end_eval;
-          }
+          first_v_end = v_rank;
+          first_best_end_eval = current_end_eval;
+        } else {
+          // We have a new second choice.
+          second_v_end = v_rank;
+          second_best_end_eval = current_end_eval;
         }
       }
     }
@@ -143,45 +139,40 @@ compute_best_route_split_choice(const Input& input,
         continue;
       }
 
-      Eval current_begin_eval(begin_v.fixed_cost());
-      current_begin_eval += sol_state.fwd_costs[s_vehicle][v][r - 1];
-      if (begin_v.has_start()) {
-        current_begin_eval +=
-          begin_v.eval(begin_v.start.value().index(),
-                       input.jobs[source.route.front()].index());
-      }
-      if (begin_v.has_end()) {
-        current_begin_eval +=
-          begin_v.eval(input.jobs[source.route[r - 1]].index(),
-                       begin_v.end.value().index());
-      }
+      const auto current_begin_eval =
+        -std::get<0>(utils::addition_eval_delta(input,
+                                                sol_state,
+                                                empty_routes[v_rank],
+                                                0,
+                                                0,
+                                                source,
+                                                0,
+                                                r));
 
       if (!begin_v.ok_for_range_bounds(current_begin_eval)) {
         continue;
       }
 
-      if (current_begin_eval < second_best_begin_eval) {
-        // Worth checking begin route full validity.
+      if (current_begin_eval < second_best_begin_eval &&
+          // Worth checking begin route full validity.
+          empty_routes[v_rank].is_valid_addition_for_tw(input,
+                                                        begin_delivery,
+                                                        source.route.begin(),
+                                                        source.route.begin() +
+                                                          r,
+                                                        0,
+                                                        0)) {
+        if (current_begin_eval < first_best_begin_eval) {
+          // We have a new first choice.
+          second_v_begin = first_v_begin;
+          second_best_begin_eval = first_best_begin_eval;
 
-        if (empty_routes[v_rank].is_valid_addition_for_tw(input,
-                                                          begin_delivery,
-                                                          source.route.begin(),
-                                                          source.route.begin() +
-                                                            r,
-                                                          0,
-                                                          0)) {
-          if (current_begin_eval < first_best_begin_eval) {
-            // We have a new first choice.
-            second_v_begin = first_v_begin;
-            second_best_begin_eval = first_best_begin_eval;
-
-            first_v_begin = v_rank;
-            first_best_begin_eval = current_begin_eval;
-          } else {
-            // We have a new second choice.
-            second_v_begin = v_rank;
-            second_best_begin_eval = current_begin_eval;
-          }
+          first_v_begin = v_rank;
+          first_best_begin_eval = current_begin_eval;
+        } else {
+          // We have a new second choice.
+          second_v_begin = v_rank;
+          second_best_begin_eval = current_begin_eval;
         }
       }
     }

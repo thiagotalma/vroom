@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -58,7 +58,7 @@ std::string ValhallaWrapper::get_matrix_query(
 
 std::string
 ValhallaWrapper::get_route_query(const std::vector<Location>& locations) const {
-  // Building matrix query for Valhalla.
+  // Building route query for Valhalla.
   std::string query =
     "GET /" + _server.path + _route_service + "?json={\"locations\":[";
 
@@ -104,7 +104,8 @@ void ValhallaWrapper::check_response(const rapidjson::Document& json_result,
     // keys can be expected so we're playing guesses. This happens
     // e.g. when requested matrix/route size goes over the server
     // limit.
-    std::string service_str = (service == _route_service) ? "route" : "matrix";
+    const std::string service_str =
+      (service == _route_service) ? "route" : "matrix";
     std::string error = "Valhalla " + service_str + " error (";
 
     if (json_result.HasMember("error") && json_result["error"].IsString()) {

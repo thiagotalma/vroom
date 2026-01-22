@@ -2,13 +2,12 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include "problems/vrptw/vrptw.h"
-#include "algorithms/heuristics/heuristics.h"
 #include "algorithms/local_search/local_search.h"
 #include "problems/vrptw/operators/cross_exchange.h"
 #include "problems/vrptw/operators/intra_cross_exchange.h"
@@ -29,7 +28,6 @@ All rights reserved (see LICENSE).
 #include "problems/vrptw/operators/tsp_fix.h"
 #include "problems/vrptw/operators/two_opt.h"
 #include "problems/vrptw/operators/unassigned_exchange.h"
-#include "utils/helpers.h"
 
 namespace vroom {
 
@@ -142,16 +140,14 @@ const std::vector<HeuristicParameters> VRPTW::heterogeneous_parameters =
 VRPTW::VRPTW(const Input& input) : VRP(input) {
 }
 
-Solution VRPTW::solve(unsigned nb_searches,
-                      unsigned depth,
-                      unsigned nb_threads,
-                      const Timeout& timeout,
-                      const std::vector<HeuristicParameters>& h_param) const {
+Solution VRPTW::solve(const unsigned nb_searches,
+                      const unsigned depth,
+                      const unsigned nb_threads,
+                      const Timeout& timeout) const {
   return VRP::solve<TWRoute, vrptw::LocalSearch>(nb_searches,
                                                  depth,
                                                  nb_threads,
                                                  timeout,
-                                                 h_param,
                                                  homogeneous_parameters,
                                                  heterogeneous_parameters);
 }

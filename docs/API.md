@@ -1,6 +1,6 @@
 <!-- This file is part of VROOM. -->
 
-<!-- Copyright (c) 2015-2024, Julien Coupey. -->
+<!-- Copyright (c) 2015-2025, Julien Coupey. -->
 <!-- All rights reserved (see LICENSE). -->
 
 This file describes the `vroom` API.
@@ -16,6 +16,7 @@ Contents:
 - all timings are in seconds
 - all distances are in meters
 - a `time_window` object is a pair of timestamps in the form `[start, end]`
+  (both ends are inclusive)
 - deprecated keys are crossed out
 - `cost` values in output are the one used internally in the optimization objective
 - a "task" is either a job, a pickup or a delivery
@@ -61,6 +62,8 @@ A `job` object has the following properties:
 | [`location_index`] | index of relevant row and column in custom matrices |
 | [`setup`] | job setup duration (defaults to 0) |
 | [`service`] | job service duration (defaults to 0) |
+| [`setup_per_type`] | object mapping vehicle types to job setup duration values |
+| [`service_per_type`] | object mapping vehicle types to job service duration values |
 | ~~[`amount`]~~ | ~~an array of integers describing multidimensional quantities~~ |
 | [`delivery`] | an array of integers describing multidimensional quantities for delivery |
 | [`pickup`] | an array of integers describing multidimensional quantities for pickup |
@@ -92,6 +95,8 @@ A `shipment_step` is similar to a `job` object (expect for shared keys already p
 | [`location_index`] | index of relevant row and column in custom matrices |
 | [`setup`] | task setup duration (defaults to 0) |
 | [`service`] | task service duration (defaults to 0) |
+| [`setup_per_type`] | object mapping vehicle types to task setup duration values |
+| [`service_per_type`] | object mapping vehicle types to task service duration values |
 | [`time_windows`] | an array of `time_window` objects describing valid slots for task service start |
 
 An error is reported if two `delivery` (resp. `pickup`) objects have the same `id`.
@@ -112,6 +117,7 @@ A `vehicle` object has the following properties:
 | [`capacity`] | an array of integers describing multidimensional quantities |
 | [`costs`] | a `cost` object defining costs for this vehicle |
 | [`skills`] | an array of integers defining skills |
+| [`type`] | a string describing this vehicle type |
 | [`time_window`] | a `time_window` object describing working hours |
 | [`breaks`] | an array of `break` objects |
 | [`speed_factor`] | a double value in the range `(0, 5]` used to scale **all** vehicle travel times (defaults to 1.), the respected precision is limited to two digits after the decimal point |
@@ -126,6 +132,7 @@ A `cost` object has the following properties:
 | ----------- | ----------- |
 | [`fixed`] | integer defining the cost of using this vehicle in the solution (defaults to `0`) |
 | [`per_hour`] | integer defining the cost for one hour of travel time with this vehicle (defaults to `3600`) |
+| [`per_task_hour`] | integer defining the cost for one hour of task time (setup + service) with this vehicle (defaults to `0`) |
 | [`per_km`] | integer defining the cost for one km of travel time with this vehicle (defaults to `0`) |
 
 Using a non-default `per-hour` value means defining travel costs based
@@ -234,7 +241,28 @@ place. So the total "action time" for a task is `setup + service` upon
 arriving at a new location or `service` only if performing a new task
 at the previous vehicle location.
 
+### Task times per vehicle type
+
+In a situation where the time it takes to complete a given task is
+different depending on which vehicle it is assigned to, it is possible
+to override the default `service` duration using
+`service_per_type`. For any `vehicle.type` value `t`, the actual
+service time for a task is `task.service_per_type[t]`, if provided. In
+any situation where `t` is not provided as a key in
+`task.service_per_type`, the service time falls back to the usual
+`service` value for all vehicles with type `t`.
+
+The exact same applies to `setup` and `setup_per_type`.
+
 ### Time windows
+
+The actual start time of a task **must** occur in one of its time
+windows. The start time happens:
+
+- potentially after some waiting time, if arrival is strictly before time window start;
+- right before setup and service times (those can extend paste the time window end).
+
+![Illustration of how time windows interact with various times](./time_window_illustration.svg)
 
 It is up to users to decide how to describe time windows:
 
@@ -283,12 +311,14 @@ integers filed under the `profile` key, then under:
 
 - `durations` for a custom travel-time matrix that will be used for
   all checks against timing constraints;
-- `distances` for a custom distance matrix;
+- `distances` for a custom distance matrix (requires also providing
+  custom `durations`);
 - `costs` for a custom cost matrix that will be used within all route
   cost evaluations.
 
-If only the `durations` matrix is provided, internal costs are derived from
-durations based on vehicles `costs` properties.
+If `durations` are provided without `distances` and distances are
+required (either by `-g` or a non-zero `per_km` cost), then a call to
+the routing engine is generated to fetch distances.
 
 Example of describing different matrices for different vehicle
 profiles:

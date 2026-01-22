@@ -5,17 +5,13 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include "structures/vroom/solution_indicators.h"
 #include "structures/vroom/solution_state.h"
-
-#ifdef LOG_LS
-#include "algorithms/local_search/log_local_search.h"
-#endif
 
 namespace vroom::ls {
 
@@ -57,22 +53,8 @@ private:
   std::vector<Route>& _best_sol;
   utils::SolutionIndicators _best_sol_indicators;
 
-#ifdef LOG_LS_OPERATORS
-  // Store operator usage stats.
-  std::array<unsigned, OperatorName::MAX> tried_moves;
-  std::array<unsigned, OperatorName::MAX> applied_moves;
-#endif
-
-#ifdef LOG_LS
-  std::vector<log::Step> steps;
-#endif
-
-  void recreate(const std::vector<Index>& routes
-#ifdef LOG_LS
-                ,
-                bool log_addition_step = false
-#endif
-  );
+  std::unordered_set<Index> try_job_additions(const std::vector<Index>& routes,
+                                              double regret_coeff);
 
   void run_ls_step();
 
@@ -98,16 +80,6 @@ public:
   utils::SolutionIndicators indicators() const;
 
   void run();
-
-#ifdef LOG_LS_OPERATORS
-  std::array<OperatorStats, OperatorName::MAX> get_stats() const;
-#endif
-
-#ifdef LOG_LS
-  std::vector<log::Step> get_steps() const {
-    return steps;
-  }
-#endif
 };
 
 } // namespace vroom::ls

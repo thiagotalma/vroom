@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -10,6 +10,7 @@ All rights reserved (see LICENSE).
 #include <cassert>
 
 #include "structures/cl_args.h"
+#include "utils/helpers.h"
 
 namespace vroom::io {
 
@@ -17,7 +18,7 @@ void update_host(Servers& servers, std::string_view value) {
   // Determine profile and host from a "car:0.0.0.0"-like value.
   std::string profile = DEFAULT_PROFILE;
   std::string host;
-  std::string path = "";
+  std::string path;
 
   auto index = value.find(':');
   if (index == std::string::npos) {
@@ -75,18 +76,10 @@ void update_port(Servers& servers, std::string_view value) {
   }
 }
 
-void set_exploration_level(CLArgs& cl_args, unsigned exploration_level) {
-  cl_args.depth = exploration_level;
+void CLArgs::set_exploration_level(unsigned exploration_level) {
+  depth = utils::get_depth(exploration_level);
 
-  assert(exploration_level <= MAX_EXPLORATION_LEVEL);
-
-  cl_args.nb_searches = 4 * (exploration_level + 1);
-  if (exploration_level >= 4) {
-    cl_args.nb_searches += 4;
-  }
-  if (exploration_level == MAX_EXPLORATION_LEVEL) {
-    cl_args.nb_searches += 4;
-  }
+  nb_searches = utils::get_nb_searches(exploration_level);
 }
 
 } // namespace vroom::io

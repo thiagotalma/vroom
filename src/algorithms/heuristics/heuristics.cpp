@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -25,7 +25,7 @@ inline void seed_route(const Input& input,
                        auto job_not_ok) {
   assert(route.empty() && init != INIT::NONE);
 
-  const auto v_rank = route.vehicle_rank;
+  const auto v_rank = route.v_rank;
   const auto& vehicle = input.vehicles[v_rank];
 
   // Initialize current route with the "best" valid job.
@@ -44,7 +44,7 @@ inline void seed_route(const Input& input,
       continue;
     }
 
-    bool is_pickup = (current_job.type == JOB_TYPE::PICKUP);
+    const bool is_pickup = (current_job.type == JOB_TYPE::PICKUP);
 
     if (route.size() + (is_pickup ? 2 : 1) > vehicle.max_tasks) {
       continue;
@@ -57,9 +57,9 @@ inline void seed_route(const Input& input,
                       higher_amount < current_job.delivery);
     }
     if (init == INIT::EARLIEST_DEADLINE) {
-      Duration current_deadline = is_pickup
-                                    ? input.jobs[job_rank + 1].tws.back().end
-                                    : current_job.tws.back().end;
+      const Duration current_deadline =
+        is_pickup ? input.jobs[job_rank + 1].tws.back().end
+                  : current_job.tws.back().end;
       try_validity = (current_deadline < earliest_deadline);
     }
     if (init == INIT::FURTHEST) {
@@ -137,17 +137,124 @@ inline void seed_route(const Input& input,
   }
 }
 
+template <class Route> struct UnassignedCosts {
+  const Vehicle& vehicle;
+  Cost max_edge_cost;
+  std::vector<Cost> min_route_to_unassigned;
+  std::vector<Cost> min_unassigned_to_route;
+
+  UnassignedCosts(const Input& input,
+                  Route& route,
+                  const std::set<Index>& unassigned)
+    : vehicle(input.vehicles[route.v_rank]),
+      max_edge_cost(utils::max_edge_eval(input, vehicle, route.route).cost),
+      min_route_to_unassigned(input.jobs.size(),
+                              std::numeric_limits<Cost>::max()),
+      min_unassigned_to_route(input.jobs.size(),
+                              std::numeric_limits<Cost>::max()) {
+    for (const auto job_rank : unassigned) {
+      const auto& unassigned_job = input.jobs[job_rank];
+      const auto unassigned_job_index = unassigned_job.index();
+
+      // The purpose here is to generate insertion lower bounds so we
+      // only account for service times (no setup) which are
+      // independent of insertion rank.
+      const auto added_service = unassigned_job.services[vehicle.type];
+      const auto service_cost = vehicle.task_eval(added_service).cost;
+
+      if (vehicle.has_start()) {
+        const auto start_to_job =
+          vehicle.eval(vehicle.start.value().index(), unassigned_job_index)
+            .cost;
+        min_route_to_unassigned[job_rank] = start_to_job + service_cost;
+      }
+
+      if (vehicle.has_end()) {
+        const auto job_to_end =
+          vehicle.eval(unassigned_job_index, vehicle.end.value().index()).cost;
+        min_unassigned_to_route[job_rank] = job_to_end + service_cost;
+      }
+
+      for (const auto j : route.route) {
+        const auto job_index = input.jobs[j].index();
+
+        const auto job_to_unassigned =
+          vehicle.eval(job_index, unassigned_job_index).cost + service_cost;
+        min_route_to_unassigned[job_rank] =
+          std::min(min_route_to_unassigned[job_rank], job_to_unassigned);
+
+        const auto unassigned_to_job =
+          vehicle.eval(unassigned_job_index, job_index).cost + service_cost;
+        min_unassigned_to_route[job_rank] =
+          std::min(min_unassigned_to_route[job_rank], unassigned_to_job);
+      }
+    }
+  }
+
+  double get_insertion_lower_bound(Index j) {
+    return static_cast<double>(min_route_to_unassigned[j] +
+                               min_unassigned_to_route[j] - max_edge_cost);
+  }
+
+  double get_pd_insertion_lower_bound(const Input& input, Index p) {
+    assert(input.jobs[p].type == JOB_TYPE::PICKUP);
+
+    // Situation where pickup and delivery are not inserted in a row.
+    const auto apart_insertion = static_cast<double>(
+      min_route_to_unassigned[p] + min_unassigned_to_route[p] +
+      min_route_to_unassigned[p + 1] + min_unassigned_to_route[p + 1] -
+      2 * max_edge_cost);
+
+    // Situation where delivery is inserted next to the pickup.
+    const auto next_insertion = static_cast<double>(
+      min_route_to_unassigned[p] + min_unassigned_to_route[p + 1] +
+      vehicle.eval(input.jobs[p].index(), input.jobs[p + 1].index()).cost -
+      max_edge_cost);
+
+    return std::min(apart_insertion, next_insertion);
+  }
+
+  void update_max_edge(const Input& input, Route& route) {
+    max_edge_cost = utils::max_edge_eval(input, vehicle, route.route).cost;
+  }
+
+  void update_min_costs(const Input& input,
+                        const std::set<Index>& unassigned,
+                        Index inserted_index) {
+    for (const auto j : unassigned) {
+      const auto& unassigned_job = input.jobs[j];
+      const auto unassigned_job_index = unassigned_job.index();
+
+      const auto added_service = unassigned_job.services[vehicle.type];
+      const auto service_cost = vehicle.task_eval(added_service).cost;
+
+      const auto to_unassigned =
+        vehicle.eval(inserted_index, unassigned_job_index).cost + service_cost;
+      min_route_to_unassigned[j] =
+        std::min(min_route_to_unassigned[j], to_unassigned);
+
+      const auto from_unassigned =
+        vehicle.eval(unassigned_job_index, inserted_index).cost + service_cost;
+      min_unassigned_to_route[j] =
+        std::min(min_unassigned_to_route[j], from_unassigned);
+    }
+  }
+};
+
 template <class Route>
 inline Eval fill_route(const Input& input,
                        Route& route,
                        std::set<Index>& unassigned,
                        const std::vector<Cost>& regrets,
                        double lambda) {
-  const auto v_rank = route.vehicle_rank;
+  const auto v_rank = route.v_rank;
   const auto& vehicle = input.vehicles[v_rank];
 
   const bool init_route_is_empty = route.empty();
   Eval route_eval = utils::route_eval_for_vehicle(input, v_rank, route.route);
+
+  // Store bounds to be able to cut out some loops.
+  UnassignedCosts unassigned_costs(input, route, unassigned);
 
   bool keep_going = true;
   while (keep_going) {
@@ -173,12 +280,21 @@ inline Eval fill_route(const Input& input,
 
       if (current_job.type == JOB_TYPE::SINGLE &&
           route.size() + 1 <= vehicle.max_tasks) {
+
+        if (best_cost < unassigned_costs.get_insertion_lower_bound(job_rank) -
+                          lambda * static_cast<double>(regrets[job_rank])) {
+          // Bypass going through whole route if we're sure insertion
+          // cost is not good enough.
+          continue;
+        }
+
         for (Index r = 0; r <= route.size(); ++r) {
           const auto current_eval =
-            utils::addition_cost(input, job_rank, vehicle, route.route, r);
+            utils::addition_eval(input, job_rank, vehicle, route.route, r);
 
-          double current_cost = static_cast<double>(current_eval.cost) -
-                                lambda * static_cast<double>(regrets[job_rank]);
+          const double current_cost =
+            static_cast<double>(current_eval.cost) -
+            lambda * static_cast<double>(regrets[job_rank]);
 
           if (current_cost < best_cost &&
               (vehicle.ok_for_range_bounds(route_eval + current_eval)) &&
@@ -197,13 +313,22 @@ inline Eval fill_route(const Input& input,
 
       if (current_job.type == JOB_TYPE::PICKUP &&
           route.size() + 2 <= vehicle.max_tasks) {
+
+        if (best_cost <
+            unassigned_costs.get_pd_insertion_lower_bound(input, job_rank) -
+              lambda * static_cast<double>(regrets[job_rank])) {
+          // Bypass going through whole route if we're sure insertion
+          // cost is not good enough.
+          continue;
+        }
+
         // Pre-compute cost of addition for matching delivery.
         std::vector<Eval> d_adds(route.route.size() + 1);
         std::vector<unsigned char> valid_delivery_insertions(
           route.route.size() + 1);
 
         for (unsigned d_rank = 0; d_rank <= route.route.size(); ++d_rank) {
-          d_adds[d_rank] = utils::addition_cost(input,
+          d_adds[d_rank] = utils::addition_eval(input,
                                                 job_rank + 1,
                                                 vehicle,
                                                 route.route,
@@ -215,7 +340,7 @@ inline Eval fill_route(const Input& input,
         }
 
         for (Index pickup_r = 0; pickup_r <= route.size(); ++pickup_r) {
-          const auto p_add = utils::addition_cost(input,
+          const auto p_add = utils::addition_eval(input,
                                                   job_rank,
                                                   vehicle,
                                                   route.route,
@@ -256,7 +381,7 @@ inline Eval fill_route(const Input& input,
 
             Eval current_eval;
             if (pickup_r == delivery_r) {
-              current_eval = utils::addition_cost(input,
+              current_eval = utils::addition_eval(input,
                                                   job_rank,
                                                   vehicle,
                                                   route.route,
@@ -266,7 +391,7 @@ inline Eval fill_route(const Input& input,
               current_eval = p_add + d_adds[delivery_r];
             }
 
-            double current_cost =
+            const double current_cost =
               current_eval.cost -
               lambda * static_cast<double>(regrets[job_rank]);
 
@@ -274,7 +399,7 @@ inline Eval fill_route(const Input& input,
               modified_with_pd.push_back(job_rank + 1);
 
               // Update best cost depending on validity.
-              bool valid =
+              const bool valid =
                 (vehicle.ok_for_range_bounds(route_eval + current_eval)) &&
                 route
                   .is_valid_addition_for_capacity_inclusion(input,
@@ -309,12 +434,16 @@ inline Eval fill_route(const Input& input,
     }
 
     if (best_cost < std::numeric_limits<double>::max()) {
-      if (input.jobs[best_job_rank].type == JOB_TYPE::SINGLE) {
+      const auto& best_job = input.jobs[best_job_rank];
+      if (best_job.type == JOB_TYPE::SINGLE) {
         route.add(input, best_job_rank, best_r);
         unassigned.erase(best_job_rank);
         keep_going = true;
+
+        unassigned_costs.update_max_edge(input, route);
+        unassigned_costs.update_min_costs(input, unassigned, best_job.index());
       }
-      if (input.jobs[best_job_rank].type == JOB_TYPE::PICKUP) {
+      if (best_job.type == JOB_TYPE::PICKUP) {
         std::vector<Index> modified_with_pd;
         modified_with_pd.reserve(best_delivery_r - best_pickup_r + 2);
         modified_with_pd.push_back(best_job_rank);
@@ -333,6 +462,13 @@ inline Eval fill_route(const Input& input,
         unassigned.erase(best_job_rank);
         unassigned.erase(best_job_rank + 1);
         keep_going = true;
+
+        unassigned_costs.update_max_edge(input, route);
+        unassigned_costs.update_min_costs(input, unassigned, best_job.index());
+        unassigned_costs
+          .update_min_costs(input,
+                            unassigned,
+                            input.jobs[best_job_rank + 1].index());
       }
 
       route_eval += best_eval;
@@ -580,7 +716,7 @@ void set_route(const Input& input,
                Route& route,
                std::unordered_set<Index>& assigned) {
   assert(route.empty());
-  const auto& vehicle = input.vehicles[route.vehicle_rank];
+  const auto& vehicle = input.vehicles[route.v_rank];
 
   // Startup load is the sum of deliveries for (single) jobs.
   Amount single_jobs_deliveries(input.zero_amount());
@@ -621,7 +757,7 @@ void set_route(const Input& input,
     assert(!assigned.contains(job_rank));
     assigned.insert(job_rank);
 
-    if (!input.vehicle_ok_with_job(route.vehicle_rank, job_rank)) {
+    if (!input.vehicle_ok_with_job(route.v_rank, job_rank)) {
       throw InputException(
         std::format("Missing skill or step out of reach for vehicle {} and "
                     "job {}.",
@@ -719,14 +855,11 @@ void set_route(const Input& input,
 }
 
 template <class Route>
-std::unordered_set<Index> set_initial_routes(const Input& input,
-                                             std::vector<Route>& routes) {
-  std::unordered_set<Index> assigned;
-
+void set_initial_routes(const Input& input,
+                        std::vector<Route>& routes,
+                        std::unordered_set<Index>& assigned) {
   std::ranges::for_each(routes,
                         [&](auto& r) { set_route(input, r, assigned); });
-
-  return assigned;
 }
 
 using RawSolution = std::vector<RawRoute>;
@@ -748,8 +881,9 @@ template Eval dynamic_vehicle_choice(const Input& input,
                                      double lambda,
                                      SORT sort);
 
-template std::unordered_set<Index> set_initial_routes(const Input& input,
-                                                      RawSolution& routes);
+template void set_initial_routes(const Input& input,
+                                 RawSolution& routes,
+                                 std::unordered_set<Index>& assigned);
 
 template Eval basic(const Input& input,
                     TWSolution& routes,
@@ -767,7 +901,8 @@ template Eval dynamic_vehicle_choice(const Input& input,
                                      double lambda,
                                      SORT sort);
 
-template std::unordered_set<Index> set_initial_routes(const Input& input,
-                                                      TWSolution& routes);
+template void set_initial_routes(const Input& input,
+                                 TWSolution& routes,
+                                 std::unordered_set<Index>& assigned);
 
 } // namespace vroom::heuristics

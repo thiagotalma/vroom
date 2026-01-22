@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -23,58 +23,55 @@ struct Job {
   Location location;
   const Id id;
   const JOB_TYPE type;
-  const Duration setup;
-  const Duration service;
+  const Duration default_setup;
+  const Duration default_service;
   const Amount delivery;
   const Amount pickup;
   const Skills skills;
   const Priority priority;
   const std::vector<TimeWindow> tws;
-  const Duration tw_length;
   const std::string description;
+  const TypeToDurationMap setup_per_type;
+  const TypeToDurationMap service_per_type;
+  std::vector<Duration> setups;
+  std::vector<Duration> services;
 
   // Constructor for regular one-stop job (JOB_TYPE::SINGLE).
   Job(Id id,
       const Location& location,
-      UserDuration setup = 0,
-      UserDuration service = 0,
+      UserDuration default_setup = 0,
+      UserDuration default_service = 0,
       Amount delivery = Amount(0),
       Amount pickup = Amount(0),
       Skills skills = Skills(),
       Priority priority = 0,
       const std::vector<TimeWindow>& tws =
         std::vector<TimeWindow>(1, TimeWindow()),
-      std::string description = "");
+      std::string description = "",
+      const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
+      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap());
 
   // Constructor for pickup and delivery jobs (JOB_TYPE::PICKUP or
   // JOB_TYPE::DELIVERY).
   Job(Id id,
       JOB_TYPE type,
       const Location& location,
-      UserDuration setup = 0,
-      UserDuration service = 0,
+      UserDuration default_setup = 0,
+      UserDuration default_service = 0,
       const Amount& amount = Amount(0),
       Skills skills = Skills(),
       Priority priority = 0,
       const std::vector<TimeWindow>& tws =
         std::vector<TimeWindow>(1, TimeWindow()),
-      std::string description = "");
+      std::string description = "",
+      const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
+      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap());
 
   Index index() const {
     return location.index();
   }
 
   bool is_valid_start(Duration time) const;
-
-  friend bool operator<(const Job& lhs, const Job& rhs) {
-    // Sort by:
-    //   - decreasing priority
-    //   - increasing TW length
-    //   - decreasing delivery amount
-    //   - decreasing pickup amount
-    return std::tie(rhs.priority, lhs.tw_length, rhs.delivery, rhs.pickup) <
-           std::tie(lhs.priority, rhs.tw_length, lhs.delivery, lhs.pickup);
-  }
 };
 
 } // namespace vroom

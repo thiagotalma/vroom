@@ -2,13 +2,12 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
 
 #include "problems/cvrp/operators/pd_shift.h"
-#include "utils/helpers.h"
 
 #include "algorithms/local_search/insertion_search.h"
 
@@ -41,10 +40,6 @@ PDShift::PDShift(const Input& input,
   assert(s_route.route[s_p_rank] + 1 == s_route.route[s_d_rank]);
 
   s_gain = _sol_state.pd_gains[s_vehicle][_s_p_rank];
-
-  if (s_route.size() == 2) {
-    s_gain.cost += _input.vehicles[s_vehicle].fixed_cost();
-  }
 
   if (t_route.empty()) {
     t_gain.cost -= _input.vehicles[t_vehicle].fixed_cost();

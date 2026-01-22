@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -47,8 +47,7 @@ public:
   Solution solve(unsigned,
                  unsigned,
                  unsigned nb_threads,
-                 const Timeout& timeout,
-                 const std::vector<HeuristicParameters>&) const override;
+                 const Timeout& timeout) const override;
 };
 
 } // namespace vroom

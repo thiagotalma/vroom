@@ -5,7 +5,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -13,10 +13,6 @@ All rights reserved (see LICENSE).
 #include "../include/rapidjson/include/rapidjson/document.h"
 #include "structures/vroom/solution/solution.h"
 #include "utils/exception.h"
-
-#ifdef LOG_LS
-#include "algorithms/local_search/log_local_search.h"
-#endif
 
 namespace vroom::io {
 
@@ -48,10 +44,6 @@ void write_to_json(const vroom::Exception& e,
 void write_to_json(const Solution& sol,
                    const std::string& output_file = "",
                    bool report_distances = false);
-
-#ifdef LOG_LS
-void write_LS_logs_to_json(const std::vector<ls::log::Dump>& dumps);
-#endif
 } // namespace vroom::io
 
 #endif

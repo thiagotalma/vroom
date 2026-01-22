@@ -2,7 +2,7 @@
 
 This file is part of VROOM.
 
-Copyright (c) 2015-2024, Julien Coupey.
+Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
@@ -63,7 +63,7 @@ void IntraRelocate::compute_gain() {
   }
   stored_gain =
     _sol_state.node_gains[s_vehicle][s_rank] -
-    utils::addition_cost(_input, s_route[s_rank], v_target, t_route, new_rank);
+    utils::addition_eval(_input, s_route[s_rank], v_target, t_route, new_rank);
 
   gain_computed = true;
 }
